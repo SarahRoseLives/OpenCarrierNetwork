@@ -21,6 +21,10 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+// pendingCallTimeout is how long an FCM-woken call stays queued for an offline
+// callee before the caller is told the call was not answered.
+const pendingCallTimeout = 45 * time.Second
+
 type Client struct {
 	conn   *websocket.Conn
 	user   *store.User
@@ -30,15 +34,25 @@ type Client struct {
 }
 
 type Server struct {
-	store      *store.Store
-	auth       *auth.AuthManager
-	allocator  *numbers.Allocator
-	areaCode   string
-	clients    map[string]*Client // key: phone number
-	services   *services.Registry
-	svcCalls   map[string]*serviceCall // key: callID
-	fcmClient  *fcm.Client
-	mu         sync.RWMutex
+	store        *store.Store
+	auth         *auth.AuthManager
+	allocator    *numbers.Allocator
+	areaCode     string
+	clients      map[string]*Client // key: phone number
+	services     *services.Registry
+	svcCalls     map[string]*serviceCall // key: callID
+	pendingCalls map[string]*pendingCall // key: callee number (offline, waiting for FCM wake)
+	fcmClient    *fcm.Client
+	mu           sync.RWMutex
+}
+
+// pendingCall is a call to a callee that was offline. We store it so that when
+// the callee reconnects (woken by the FCM push) the call is delivered to them.
+type pendingCall struct {
+	callID    string
+	caller    *Client
+	offer     *SDPSession
+	createdAt time.Time
 }
 
 type serviceCall struct {
@@ -47,16 +61,19 @@ type serviceCall struct {
 }
 
 func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, areaCode string, reg *services.Registry, fcmClient *fcm.Client) *Server {
-	return &Server{
-		store:     s,
-		auth:      a,
-		allocator: alloc,
-		areaCode:  areaCode,
-		clients:   make(map[string]*Client),
-		services:  reg,
-		svcCalls:  make(map[string]*serviceCall),
-		fcmClient: fcmClient,
+	srv := &Server{
+		store:        s,
+		auth:         a,
+		allocator:    alloc,
+		areaCode:     areaCode,
+		clients:      make(map[string]*Client),
+		services:     reg,
+		svcCalls:     make(map[string]*serviceCall),
+		pendingCalls: make(map[string]*pendingCall),
+		fcmClient:    fcmClient,
 	}
+	go srv.expirePendingCalls()
+	return srv
 }
 
 // HandleWebSocket handles incoming WebSocket connections
@@ -226,6 +243,9 @@ func (srv *Server) handleRegister(client *Client, msg *RegisterRequest) {
 	})
 
 	log.Printf("User registered: %s (%s)", numbers.FormatNumber(user.AreaCode, user.Number), user.DisplayName)
+
+	// Deliver any call that arrived while this user was offline (FCM wake-up)
+	srv.deliverPendingCall(client)
 }
 
 func (srv *Server) handleRegisterFCM(client *Client, msg *RegisterFCM) {
@@ -281,28 +301,43 @@ func (srv *Server) handleCall(client *Client, msg *CallRequest) {
 			return
 		}
 
+		if srv.fcmClient == nil {
+			srv.sendError(client, 404, "user not online")
+			return
+		}
+
 		callID := generateCallID()
 		callerName := client.user.DisplayName
 		if callerName == "" {
 			callerName = client.user.Number
 		}
 
-		if srv.fcmClient != nil {
-			if err := srv.fcmClient.SendCallNotification(
-				callee.FCMToken, callID, client.user.Number, callerName,
-			); err != nil {
-				log.Printf("FCM push failed: %v", err)
-				srv.sendError(client, 404, "user not online")
-				return
-			}
-			log.Printf("FCM push sent for call %s to %s", callID, localNum)
-			// Tell caller we're trying
-			srv.sendMessage(client, &ServerMessage{
-				CallRinging: &CallRinging{CallID: callID},
-			})
-		} else {
-			srv.sendError(client, 404, "user not online")
+		// Queue the call so it is delivered when the callee reconnects.
+		srv.mu.Lock()
+		srv.pendingCalls[localNum] = &pendingCall{
+			callID:    callID,
+			caller:    client,
+			offer:     msg.Offer,
+			createdAt: time.Now(),
 		}
+		srv.mu.Unlock()
+		client.mu.Lock()
+		client.callID = callID
+		client.mu.Unlock()
+
+		if err := srv.fcmClient.SendCallNotification(
+			callee.FCMToken, callID, client.user.Number, callerName,
+		); err != nil {
+			log.Printf("FCM push failed: %v", err)
+			srv.removePendingByCallID(callID)
+			srv.sendError(client, 404, "user not online")
+			return
+		}
+		log.Printf("FCM push sent for call %s to %s", callID, localNum)
+		// Tell caller we're trying
+		srv.sendMessage(client, &ServerMessage{
+			CallRinging: &CallRinging{CallID: callID},
+		})
 		return
 	}
 
@@ -458,6 +493,13 @@ func (srv *Server) handleCallHangup(client *Client, msg *CallHangup) {
 		return
 	}
 
+	// If this call is still pending (callee never answered the FCM wake-up),
+	// just remove it — the caller is the one hanging up.
+	if srv.removePendingByCallID(callID) {
+		log.Printf("Pending call %s cancelled by caller %s", callID, client.user.Number)
+		return
+	}
+
 	// Check if this is a service call
 	srv.mu.Lock()
 	if svcCall, ok := srv.svcCalls[callID]; ok {
@@ -523,6 +565,101 @@ func (srv *Server) handleICECandidate(client *Client, msg *ICECandidateTrickle) 
 	srv.mu.RUnlock()
 }
 
+func (srv *Server) isOnline(client *Client) bool {
+	if client == nil || client.user == nil {
+		return false
+	}
+	srv.mu.RLock()
+	defer srv.mu.RUnlock()
+	c, ok := srv.clients[client.user.Number]
+	return ok && c == client
+}
+
+// deliverPendingCall delivers a queued call to a callee who just reconnected
+// after being woken by an FCM push.
+func (srv *Server) deliverPendingCall(callee *Client) {
+	if callee == nil || callee.user == nil {
+		return
+	}
+
+	srv.mu.Lock()
+	p, ok := srv.pendingCalls[callee.user.Number]
+	if ok {
+		delete(srv.pendingCalls, callee.user.Number)
+	}
+	srv.mu.Unlock()
+	if !ok {
+		return
+	}
+
+	// If the caller gave up or disconnected while waiting, don't ring.
+	if !srv.isOnline(p.caller) {
+		log.Printf("Pending call %s dropped: caller offline", p.callID)
+		return
+	}
+
+	log.Printf("Delivering pending call %s to %s", p.callID, callee.user.Number)
+
+	srv.sendMessage(callee, &ServerMessage{
+		IncomingCall: &IncomingCall{
+			CallID: p.callID,
+			CallerNumber: &PhoneNumber{
+				AreaCode: p.caller.user.AreaCode,
+				Number:   p.caller.user.Number,
+			},
+			CallerName: &DisplayName{Name: p.caller.user.DisplayName},
+			Offer:      p.offer,
+		},
+	})
+
+	p.caller.mu.Lock()
+	p.caller.callID = p.callID
+	p.caller.mu.Unlock()
+	callee.mu.Lock()
+	callee.callID = p.callID
+	callee.mu.Unlock()
+}
+
+func (srv *Server) removePendingByCallID(callID string) bool {
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	for num, p := range srv.pendingCalls {
+		if p.callID == callID {
+			delete(srv.pendingCalls, num)
+			return true
+		}
+	}
+	return false
+}
+
+func (srv *Server) expirePendingCalls() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		var expired []*pendingCall
+		srv.mu.Lock()
+		for num, p := range srv.pendingCalls {
+			if time.Since(p.createdAt) > pendingCallTimeout {
+				expired = append(expired, p)
+				delete(srv.pendingCalls, num)
+			}
+		}
+		srv.mu.Unlock()
+
+		for _, p := range expired {
+			log.Printf("Pending call %s expired (no answer)", p.callID)
+			if srv.isOnline(p.caller) {
+				p.caller.mu.Lock()
+				p.caller.callID = ""
+				p.caller.mu.Unlock()
+				srv.sendMessage(p.caller, &ServerMessage{
+					CallEnded: &CallEnded{CallID: p.callID, Reason: "no answer"},
+				})
+			}
+		}
+	}
+}
+
 func (srv *Server) unregisterClient(client *Client) {
 	if client.user == nil {
 		return
@@ -534,6 +671,9 @@ func (srv *Server) unregisterClient(client *Client) {
 	client.mu.Unlock()
 
 	if callID != "" {
+		// If the caller disconnects while the call is still pending, drop it.
+		srv.removePendingByCallID(callID)
+
 		srv.mu.RLock()
 		for _, c := range srv.clients {
 			c.mu.Lock()

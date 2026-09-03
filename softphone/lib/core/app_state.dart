@@ -1,7 +1,9 @@
 import 'dart:developer';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../core/ksim/ksim.dart';
+import '../core/notifications/call_notifications.dart';
 import '../core/signaling/signaling_client.dart';
 import '../core/webrtc/webrtc_manager.dart';
 
@@ -59,6 +61,7 @@ class AppState extends ChangeNotifier {
   CallSession? activeCall;
   bool isMuted = false;
   bool isSpeaker = false;
+  AudioPlayer? _ringer;
 
   final SignalingClient _signaling;
   final WebRTCManager _webrtc = WebRTCManager();
@@ -143,6 +146,43 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Called when an FCM push says a call is waiting for us. Force a reconnect
+  /// (ignoring backoff) so the server delivers the queued incoming call.
+  void wakeForIncomingCall() {
+    log('AppState: FCM incoming call — forcing reconnect');
+    if (keypair == null) return;
+    if (_signaling.connectionState != OcnConnectionState.connected) {
+      _signaling.reconnectNow();
+    }
+  }
+
+  Future<void> _startRinger() async {
+    if (_ringer != null) return;
+    log('AppState: starting ringer');
+    try {
+      final player = AudioPlayer();
+      await player.setReleaseMode(ReleaseMode.loop);
+      await player.setVolume(1.0);
+      await player.play(AssetSource('ringtone/ring.wav'));
+      _ringer = player;
+    } catch (e) {
+      log('AppState: ringer start failed: $e');
+    }
+  }
+
+  Future<void> _stopRinger() async {
+    final player = _ringer;
+    _ringer = null;
+    if (player == null) return;
+    log('AppState: stopping ringer');
+    try {
+      await player.stop();
+      await player.dispose();
+    } catch (e) {
+      log('AppState: ringer stop failed: $e');
+    }
+  }
+
   Future<void> logout() async {
     _fcmToken = null;
     _signaling.disconnect();
@@ -190,6 +230,9 @@ class AppState extends ChangeNotifier {
 
     _signaling.onIncomingCall = (callId, caller, callerName, sdp) {
       log('AppState: incoming call $callId from ${caller.formatted} ($callerName)');
+      // Clear any FCM full-screen notification; the WebSocket delivery means
+      // the call is real, and the ringer below takes over.
+      CallNotifications.cancelIncomingCall(callId);
       activeCall = CallSession(
         callId: callId,
         remoteNumber: caller.formatted,
@@ -199,6 +242,7 @@ class AppState extends ChangeNotifier {
       );
       activeCall!.pendingOfferSdp = sdp;
       notifyListeners();
+      _startRinger();
     };
 
     _signaling.onCallRinging = (callId) {
@@ -245,7 +289,6 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     };
-
     _signaling.onICECandidate = (callId, candidate, sdpMid, sdpMLineIndex) {
       final ice = RTCIceCandidate(candidate, sdpMid, sdpMLineIndex);
       if (activeCall != null && activeCall!.peerConnection != null) {
@@ -335,6 +378,7 @@ class AppState extends ChangeNotifier {
     if (activeCall == null || !activeCall!.isIncoming) return;
 
     log('Answering call ${activeCall!.callId}');
+    await _stopRinger();
 
     try {
       final pc = await _webrtc.createPeerConnection();
@@ -428,8 +472,13 @@ class AppState extends ChangeNotifier {
   }
 
   void _cleanupCall() {
-    activeCall?.localStream?.dispose();
-    activeCall?.peerConnection?.close();
+    final call = activeCall;
+    _stopRinger();
+    if (call != null) {
+      CallNotifications.cancelIncomingCall(call.callId);
+    }
+    call?.localStream?.dispose();
+    call?.peerConnection?.close();
     activeCall = null;
     isMuted = false;
     isSpeaker = false;

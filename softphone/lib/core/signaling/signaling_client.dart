@@ -77,6 +77,20 @@ class SignalingClient {
     _doConnect();
   }
 
+  /// Drop any backoff delay and reconnect immediately. Used when an FCM push
+  /// tells us a call is waiting — we can't afford to wait out a backoff timer.
+  void reconnectNow() {
+    if (_state == OcnConnectionState.connected || _state == OcnConnectionState.connecting) {
+      return;
+    }
+    dev.log('Reconnecting immediately (FCM wake)');
+    _intentionalDisconnect = false;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _setState(OcnConnectionState.connecting);
+    _doConnect();
+  }
+
   void _doConnect() {
     try {
       _channel = WebSocketChannel.connect(Uri.parse(serverUrl));

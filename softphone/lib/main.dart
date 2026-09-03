@@ -33,9 +33,10 @@ class _OcnSoftphoneAppState extends State<OcnSoftphoneApp> {
   Future<void> _initFCM() async {
     final token = await FCMService.init(
       onCall: (callId, callerNumber, callerName) {
-        log('FCM: incoming call notification — reconnecting if needed');
-        // FCM woke us up for a call — ensure we're connected
-        // The server will deliver the call via WebSocket once we register
+        log('FCM: incoming call notification for $callerNumber ($callerName) — reconnecting');
+        // FCM woke us up for a call — reconnect now so the server delivers
+        // the queued call over the WebSocket.
+        _appState.wakeForIncomingCall();
       },
     );
     if (token != null) {
