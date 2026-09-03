@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
@@ -92,7 +93,48 @@ func (e *EchoService) HandleCall(callID string, offer *webrtc.SessionDescription
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		log.Printf("EchoService: ONTRACK fired (codec: %s)", remoteTrack.Codec().MimeType)
 
+		// Play welcome message first, then echo
 		go func() {
+			// Generate and play welcome
+			frames, err := e.tts.GenerateOpusFrames("Welcome to OpenCarrier Network's Echo Service")
+			if err != nil {
+				log.Printf("EchoService: TTS failed: %v", err)
+			} else {
+				log.Printf("EchoService: playing %d welcome frames", len(frames))
+				var seqNum uint16
+				var timestamp uint32
+				for _, frame := range frames {
+					select {
+					case <-call.done:
+						return
+					default:
+					}
+
+					pkt := &rtp.Packet{
+						Header: rtp.Header{
+							Version:        2,
+							PayloadType:    111,
+							SequenceNumber: seqNum,
+							Timestamp:      timestamp,
+							SSRC:           12345,
+							Marker:         true,
+						},
+						Payload: frame,
+					}
+
+					if err := localTrack.WriteRTP(pkt); err != nil {
+						log.Printf("EchoService: welcome write error: %v", err)
+						return
+					}
+
+					seqNum++
+					timestamp += opusFrameSize
+					time.Sleep(20 * time.Millisecond)
+				}
+				log.Printf("EchoService: welcome done, now echoing")
+			}
+
+			// Now echo received audio
 			pktCount := 0
 			for {
 				select {
@@ -109,7 +151,7 @@ func (e *EchoService) HandleCall(callID string, offer *webrtc.SessionDescription
 
 				pktCount++
 				if pktCount == 1 {
-					log.Printf("EchoService: first pkt seq=%d ts=%d payload=%d bytes",
+					log.Printf("EchoService: first echo pkt seq=%d ts=%d payload=%d bytes",
 						pkt.SequenceNumber, pkt.Timestamp, len(pkt.Payload))
 				}
 
@@ -126,7 +168,7 @@ func (e *EchoService) HandleCall(callID string, offer *webrtc.SessionDescription
 				}
 
 				if err := localTrack.WriteRTP(echoPkt); err != nil {
-					log.Printf("EchoService: write error: %v", err)
+					log.Printf("EchoService: echo write error: %v", err)
 					return
 				}
 			}
