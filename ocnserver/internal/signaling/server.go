@@ -360,6 +360,12 @@ func (srv *Server) handleRegister(client *Client, msg *RegisterRequest) {
 	}
 
 	srv.mu.Lock()
+	// A reconnect replaces the old socket for the same number. If a previous
+	// connection is still alive (e.g. the network dropped but the server has
+	// not noticed yet), kick it so it can't linger or clobber this one.
+	if prev, ok := srv.clients[user.Number]; ok && prev != client {
+		go prev.conn.Close()
+	}
 	srv.clients[user.Number] = client
 	srv.mu.Unlock()
 	client.user = user
@@ -965,7 +971,11 @@ func (srv *Server) unregisterClient(client *Client) {
 	}
 
 	srv.mu.Lock()
-	delete(srv.clients, client.user.Number)
+	// Only remove this number if it still points at this client. A stale
+	// socket from a superseded reconnect must not evict the live connection.
+	if cur, ok := srv.clients[client.user.Number]; ok && cur == client {
+		delete(srv.clients, client.user.Number)
+	}
 	srv.mu.Unlock()
 
 	log.Printf("User disconnected: %s-%s", client.user.AreaCode, client.user.Number)

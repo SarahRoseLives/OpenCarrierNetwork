@@ -77,6 +77,10 @@ class SignalingClient {
   static const _maxBackoff = 30;
   bool _intentionalDisconnect = false;
 
+  /// True when the next established socket must re-register even though we are
+  /// in the `connecting` state (e.g. an FCM wake forcing an immediate connect).
+  bool _reregisterOnReady = false;
+
   // Pending registration state
   KSimKeypair? _pendingKeypair;
   String? _pendingDisplayName;
@@ -99,6 +103,7 @@ class SignalingClient {
       return;
     }
     _intentionalDisconnect = false;
+    _reregisterOnReady = false;
     _setState(OcnConnectionState.connecting);
     _doConnect();
   }
@@ -114,45 +119,76 @@ class SignalingClient {
     _intentionalDisconnect = false;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _reregisterOnReady = true;
     _setState(OcnConnectionState.connecting);
     _doConnect();
   }
 
   void _doConnect() {
-    try {
-      _channel = WebSocketChannel.connect(Uri.parse(serverUrl));
+    final chan = WebSocketChannel.connect(Uri.parse(serverUrl));
+    _channel = chan;
+    var dead = false;
 
-      // Listen for connection to be ready, then re-register if reconnecting
-      _channel!.ready
-          .then((_) {
-            dev.log('WebSocket connected');
-            if (_state == OcnConnectionState.reconnecting && _keypair != null) {
-              _reRegister();
-            }
-          })
-          .catchError((e) {
-            dev.log('WebSocket ready error: $e');
-            _onDisconnected();
-          });
-
-      _channel!.stream.listen(
-        (data) {
-          final json = jsonDecode(data as String) as Map<String, dynamic>;
-          _handleMessage(json);
-        },
-        onError: (error) {
-          dev.log('WebSocket error: $error');
-          _onDisconnected();
-        },
-        onDone: () {
-          dev.log('WebSocket closed');
-          _onDisconnected();
-        },
-      );
-    } catch (e) {
-      dev.log('WebSocket connect failed: $e');
+    // If a connect attempt neither succeeds nor fails (e.g. a silent network
+    // black hole), abort it after a timeout so the reconnect loop keeps
+    // cycling instead of stalling forever on a hung socket.
+    final guard = Timer(const Duration(seconds: 10), () {
+      if (dead) return;
+      dead = true;
+      dev.log('WebSocket connect timed out, will retry');
+      try {
+        chan.sink.close();
+      } catch (_) {}
       _onDisconnected();
-    }
+    });
+
+    // A socket event only matters if it belongs to the current attempt.
+    // Events from a superseded socket (e.g. one we tore down after a failed
+    // re-register) must not disturb the live connection.
+    bool current() => !dead && identical(chan, _channel);
+
+    // Listen for connection to be ready, then re-register if reconnecting
+    chan.ready
+        .then((_) {
+          if (!current()) return;
+          guard.cancel();
+          dev.log('WebSocket connected');
+          if (_keypair != null &&
+              (_state == OcnConnectionState.reconnecting ||
+                  _reregisterOnReady)) {
+            _reregisterOnReady = false;
+            _reRegister();
+          }
+        })
+        .catchError((e) {
+          if (!current()) return;
+          dead = true;
+          guard.cancel();
+          dev.log('WebSocket ready error: $e');
+          _onDisconnected();
+        });
+
+    chan.stream.listen(
+      (data) {
+        if (!current()) return;
+        final json = jsonDecode(data as String) as Map<String, dynamic>;
+        _handleMessage(json);
+      },
+      onError: (error) {
+        if (!current()) return;
+        dead = true;
+        guard.cancel();
+        dev.log('WebSocket error: $error');
+        _onDisconnected();
+      },
+      onDone: () {
+        if (!current()) return;
+        dead = true;
+        guard.cancel();
+        dev.log('WebSocket closed');
+        _onDisconnected();
+      },
+    );
   }
 
   void _onDisconnected() {
@@ -205,6 +241,7 @@ class SignalingClient {
 
   void disconnect() {
     _intentionalDisconnect = true;
+    _reregisterOnReady = false;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _channel?.sink.close();
@@ -353,7 +390,13 @@ class SignalingClient {
     await _challengeCompleter!.future;
   }
 
-  /// Re-register after reconnection using stored credentials
+  /// Re-register after reconnection using stored credentials.
+  ///
+  /// Reconnection runs while `_state` is still `reconnecting`, so this can be
+  /// called on a live socket even though we aren't `connected` yet. If the
+  /// registration fails for a transient reason, drop the socket and kick the
+  /// reconnect loop rather than leaving the client wedged on the reconnecting
+  /// banner.
   Future<void> _reRegister() async {
     if (_keypair == null) return;
     dev.log('Re-registering after reconnect...');
@@ -362,6 +405,12 @@ class SignalingClient {
       dev.log('Re-registration successful');
     } catch (e) {
       dev.log('Re-registration failed: $e');
+      final ch = _channel;
+      _channel = null;
+      try {
+        ch?.sink.close();
+      } catch (_) {}
+      _scheduleReconnect();
     }
   }
 
@@ -419,8 +468,11 @@ class SignalingClient {
   }
 
   void _send(Map<String, dynamic> message) {
-    if (_state != OcnConnectionState.connected &&
-        _state != OcnConnectionState.connecting) {
+    // Sending is allowed on any live (or being-established) socket. This must
+    // include `reconnecting`: after a drop we open a fresh socket and send the
+    // challenge/register to recover, and that happens before the state flips
+    // back to `connected`.
+    if (_state == OcnConnectionState.disconnected || _channel == null) {
       dev.log('Cannot send: not connected');
       return;
     }
