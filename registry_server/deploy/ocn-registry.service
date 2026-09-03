@@ -1,0 +1,36 @@
+[Unit]
+Description=OCN Registry (area codes, routing, push, website)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ocn
+Group=ocn
+WorkingDirectory=/opt/ocn-registry
+ExecStart=/opt/ocn-registry/registry-server \
+  -domain opencarrier.network \
+  -email sarahroselives@protonmail.com \
+  -http-addr :80 \
+  -https-addr :443 \
+  -grpc-addr :7443 \
+  -db /var/lib/ocn-registry/registry.db \
+  -cache-dir /var/lib/ocn-registry/certs \
+  -fcm-creds /etc/ocn-registry/firebase-service-account.json \
+  -turn-udp :3478 \
+  -turn-tcp :3478 \
+  -turn-public-ip 144.202.16.82 \
+  -turn-username ocn \
+  -turn-password __TURN_PASSWORD__
+Restart=always
+RestartSec=3
+# Bind low ports (80/443) as the unprivileged ocn user
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# Hardening
+ProtectSystem=full
+PrivateTmp=true
+ReadWritePaths=/var/lib/ocn-registry
+
+[Install]
+WantedBy=multi-user.target

@@ -29,6 +29,7 @@
         <a data-page="dashboard" class="active">Dashboard</a>
         <a data-page="lines">Lines</a>
         <a data-page="provision">Provision</a>
+        <a data-page="federation">Federation</a>
         <a data-page="account">Account</a>
       </nav>
       <div class="side-foot">
@@ -111,6 +112,33 @@
           </tr></thead>
           <tbody id="prov-list"></tbody>
         </table>
+      </section>
+
+      <!-- Federation -->
+      <section id="page-federation" class="hidden">
+        <h2>Federation</h2>
+        <div id="fed-status" class="panel"></div>
+
+        <form id="fed-form" class="panel">
+          <h3>Register with the OCN registry</h3>
+          <p class="muted small">Uses this server's key. Restart after registering to activate.</p>
+          <div class="row"><label>Registry address (host:port)</label>
+            <input id="fed-address" placeholder="opencarrier.network:7443"></div>
+          <div class="row"><label>Federation public address (how other servers reach you)</label>
+            <input id="fed-public" placeholder="opencarrier.network:9110"></div>
+          <div class="row"><label>Requested area code (blank = auto; 800/900 reserved)</label>
+            <input id="fed-area" placeholder="e.g. 212"></div>
+          <div class="row">
+            <label class="row-inline" style="display:flex;align-items:center;gap:8px">
+              <input id="fed-insecure" type="checkbox" style="width:auto">
+              Insecure registry (dev only)
+            </label>
+          </div>
+          <div id="fed-error" class="error hidden"></div>
+          <div id="fed-ok" class="ok hidden"></div>
+          <button type="submit" class="primary">Register</button>
+          <button type="button" id="fed-clear" class="ghost danger">Clear federation</button>
+        </form>
       </section>
 
       <!-- Account -->

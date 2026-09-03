@@ -28,12 +28,20 @@ import (
 var staticFS embed.FS
 
 type Options struct {
-	Store          *store.Store
-	Online         func() map[string]bool
-	SignalingPort  int
-	PublicAddress  string // optional public host:port of the signaling server
-	AreaCode       string
-	ServerName     string
+	Store         *store.Store
+	Online        func() map[string]bool
+	SignalingPort int
+	PublicAddress string // optional public host:port of the signaling server
+	AreaCode      string
+	ServerName    string
+	ServerKeyPath string // path to this server's kSIM key (registry signing)
+
+	// Area returns the live server area code (updates on hot federation).
+	Area func() string
+	// OnFederated is called after a successful registration so the running
+	// server can hot-join (attach registry, set area code, enable push)
+	// without a restart. Return an error to signal live activation failed.
+	OnFederated func(fs *store.FederationSettings, area string) error
 }
 
 type Server struct {
@@ -76,6 +84,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/provisions", s.requireAuth(s.handleListProvisions))
 	s.mux.HandleFunc("POST /api/provisions", s.requireAuth(s.handleCreateProvision))
 	s.mux.HandleFunc("POST /api/provisions/{id}/revoke", s.requireAuth(s.handleRevokeProvision))
+
+	// Federation
+	s.mux.HandleFunc("GET /api/federation/status", s.requireAuth(s.handleFederationStatus))
+	s.mux.HandleFunc("POST /api/federation/register", s.requireAuth(s.handleFederationRegister))
+	s.mux.HandleFunc("POST /api/federation/clear", s.requireAuth(s.handleFederationClear))
 }
 
 // ---- helpers ----
@@ -147,9 +160,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"token":        token,
-		"username":     req.Username,
-		"must_change":  mustChange,
+		"token":       token,
+		"username":    req.Username,
+		"must_change": mustChange,
 	})
 }
 
@@ -206,13 +219,13 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		online = len(s.opts.Online())
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"lines_total":        lines,
-		"lines_online":       online,
-		"free_estimate":      free,
-		"tokens_issued":      issued,
-		"tokens_used":        used,
-		"server_name":        s.opts.ServerName,
-		"area_code":          s.opts.AreaCode,
+		"lines_total":   lines,
+		"lines_online":  online,
+		"free_estimate": free,
+		"tokens_issued": issued,
+		"tokens_used":   used,
+		"server_name":   s.opts.ServerName,
+		"area_code":     s.opts.AreaCode,
 	})
 }
 

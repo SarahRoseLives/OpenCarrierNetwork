@@ -13,7 +13,7 @@ import (
 type User struct {
 	KSimPublicKey ed25519.PublicKey
 	AreaCode      string
-	Number        string  // 7-digit local number
+	Number        string // 7-digit local number
 	DisplayName   string
 	FCMToken      string
 	RegisteredAt  time.Time
@@ -104,6 +104,10 @@ func (s *Store) migrate() error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_prov_tokens_number
 			ON provisioning_tokens(number) WHERE number IS NOT NULL AND status = 'issued'`,
 		`CREATE INDEX IF NOT EXISTS idx_prov_tokens_status ON provisioning_tokens(status, created_at)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL DEFAULT ''
+		)`,
 	}
 
 	for _, m := range migrations {

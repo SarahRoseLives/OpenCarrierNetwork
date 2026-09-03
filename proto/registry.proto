@@ -5,6 +5,7 @@ package ocn.registry;
 option go_package = "github.com/open-carrier-network/ocn/proto/registry";
 
 import "common.proto";
+import "google/protobuf/empty.proto";
 
 service OCNRegistry {
   // OCNServer management
@@ -17,6 +18,21 @@ service OCNRegistry {
 
   // STUN
   rpc GetICECandidates(ICECandidateRequest) returns (ICECandidateResponse);
+
+  // Push: lets a registered OCN server wake one of its offline devices using
+  // the network's shared Firebase credential. Stateless (token passed per call).
+  rpc PushDevice(PushDeviceRequest) returns (google.protobuf.Empty);
+}
+
+// Push a data message to a single device via the shared Firebase project.
+message PushDeviceRequest {
+  string token = 1;
+  string call_id = 2;
+  string caller_number = 3;  // 7-digit or full? formatted number string
+  string caller_name = 4;
+  string area_code = 5;      // sending server's area code (for auth/audit)
+  int64 timestamp = 6;       // unix seconds; signed by the calling server
+  bytes signature = 7;       // Ed25519 over area_code|timestamp|token
 }
 
 // OCNServer registration
@@ -37,6 +53,8 @@ message RegisterOCNServerResponse {
 message DeregisterOCNServerRequest {
   string area_code = 1;
   bytes ocnserver_public_key = 2;  // Must sign to prove ownership
+  int64 timestamp = 3;             // unix seconds
+  bytes signature = 4;             // Ed25519 over area_code|timestamp
 }
 
 // OCNServer directory
@@ -78,4 +96,12 @@ message ICECandidateRequest {
 message ICECandidateResponse {
   repeated ocn.common.ICECandidate candidates = 1;
   string server_reflexive_address = 2;  // STUN-derived public IP:port
+  repeated ICEServer ice_servers = 3;   // STUN/TURN servers clients should use
+}
+
+// An ICE server entry (mirrors WebRTC RTCIceServer).
+message ICEServer {
+  repeated string urls = 1;   // e.g. "stun:stun.l.google.com:19302", "turn:host:3478?transport=udp"
+  string username = 2;        // TURN long-term credential user ("" for STUN)
+  string credential = 3;      // TURN password ("" for STUN)
 }

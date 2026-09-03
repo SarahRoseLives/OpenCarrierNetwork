@@ -39,16 +39,24 @@ type ChallengeResponseMsg struct {
 }
 
 type RegisterRequest struct {
-	KsimID             *KSimID              `json:"ksim_id"`
-	ChallengeResponse  *ChallengeResponse   `json:"challenge_response"`
-	DisplayName        *DisplayName         `json:"display_name"`
-	ActivationToken    string               `json:"activation_token,omitempty"`
+	KsimID            *KSimID            `json:"ksim_id"`
+	ChallengeResponse *ChallengeResponse `json:"challenge_response"`
+	DisplayName       *DisplayName       `json:"display_name"`
+	ActivationToken   string             `json:"activation_token,omitempty"`
 }
 
 type RegisterResponse struct {
 	Success        bool         `json:"success"`
 	AssignedNumber *PhoneNumber `json:"assigned_number,omitempty"`
 	ErrorMessage   string       `json:"error_message,omitempty"`
+	IceServers     []IceServer  `json:"ice_servers,omitempty"`
+}
+
+// IceServer is a WebRTC ICE server handed to clients (STUN/TURN).
+type IceServer struct {
+	URLs       []string `json:"urls"`
+	Username   string   `json:"username,omitempty"`
+	Credential string   `json:"credential,omitempty"`
 }
 
 type RegisterFCM struct {
@@ -61,15 +69,15 @@ type CallRequest struct {
 }
 
 type IncomingCall struct {
-	CallID        string       `json:"call_id"`
-	CallerNumber  *PhoneNumber `json:"caller_number"`
-	CallerName    *DisplayName `json:"caller_name"`
-	Offer         *SDPSession  `json:"offer"`
+	CallID       string       `json:"call_id"`
+	CallerNumber *PhoneNumber `json:"caller_number"`
+	CallerName   *DisplayName `json:"caller_name"`
+	Offer        *SDPSession  `json:"offer"`
 }
 
 type CallAnswer struct {
-	CallID  string      `json:"call_id"`
-	Answer  *SDPSession `json:"answer"`
+	CallID string      `json:"call_id"`
+	Answer *SDPSession `json:"answer"`
 }
 
 type CallRinging struct {

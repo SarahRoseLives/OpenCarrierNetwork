@@ -1,0 +1,20 @@
+[Unit]
+Description=OCN Server Beta (federated)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ocn
+Group=ocn
+WorkingDirectory=/opt/ocn-beta
+ExecStart=/opt/ocn-beta/ocnserver -config /etc/ocn/beta.json
+Restart=always
+RestartSec=3
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

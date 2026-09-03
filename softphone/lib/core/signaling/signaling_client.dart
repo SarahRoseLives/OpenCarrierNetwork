@@ -20,6 +20,7 @@ class OcnPhoneNumber {
     if (areaCode.isEmpty) return local;
     return '$areaCode-$local';
   }
+
   String get localFormatted {
     if (number.length >= 7) {
       return '${number.substring(0, 3)}-${number.substring(3)}';
@@ -35,17 +36,35 @@ class OcnPhoneNumber {
 
 enum OcnConnectionState { disconnected, connecting, connected, reconnecting }
 
+/// A WebRTC ICE server (STUN/TURN) as provided by the OCN server on
+/// registration.
+class IceServerConfig {
+  final List<String> urls;
+  final String? username;
+  final String? credential;
+
+  IceServerConfig({required this.urls, this.username, this.credential});
+}
+
 class SignalingClient {
   WebSocketChannel? _channel;
   String serverUrl;
 
   // Callbacks
   Function(OcnPhoneNumber number)? onRegistered;
-  Function(String callId, OcnPhoneNumber caller, String callerName, String sdp)? onIncomingCall;
+  Function(String callId, OcnPhoneNumber caller, String callerName, String sdp)?
+  onIncomingCall;
   Function(String callId)? onCallRinging;
-  Function(String callId, String? sdpAnswer, String? serviceCode, String? serviceName)? onCallConnected;
+  Function(
+    String callId,
+    String? sdpAnswer,
+    String? serviceCode,
+    String? serviceName,
+  )?
+  onCallConnected;
   Function(String callId, String reason)? onCallEnded;
-  Function(String callId, String candidate, String sdpMid, int sdpMLineIndex)? onICECandidate;
+  Function(String callId, String candidate, String sdpMid, int sdpMLineIndex)?
+  onICECandidate;
   Function(int code, String message)? onError;
   Function(OcnConnectionState state)? onConnectionState;
 
@@ -64,13 +83,19 @@ class SignalingClient {
   String _pendingActivationToken = '';
   Completer<void>? _challengeCompleter;
 
+  /// STUN/TURN servers handed to us by the server on registration.
+  List<IceServerConfig> _iceServers = [];
+
+  List<IceServerConfig> get iceServers => List.unmodifiable(_iceServers);
+
   SignalingClient({required this.serverUrl});
 
   OcnConnectionState get connectionState => _state;
   bool get isConnected => _state == OcnConnectionState.connected;
 
   void connect() {
-    if (_state == OcnConnectionState.connecting || _state == OcnConnectionState.connected) {
+    if (_state == OcnConnectionState.connecting ||
+        _state == OcnConnectionState.connected) {
       return;
     }
     _intentionalDisconnect = false;
@@ -81,7 +106,8 @@ class SignalingClient {
   /// Drop any backoff delay and reconnect immediately. Used when an FCM push
   /// tells us a call is waiting — we can't afford to wait out a backoff timer.
   void reconnectNow() {
-    if (_state == OcnConnectionState.connected || _state == OcnConnectionState.connecting) {
+    if (_state == OcnConnectionState.connected ||
+        _state == OcnConnectionState.connecting) {
       return;
     }
     dev.log('Reconnecting immediately (FCM wake)');
@@ -97,15 +123,17 @@ class SignalingClient {
       _channel = WebSocketChannel.connect(Uri.parse(serverUrl));
 
       // Listen for connection to be ready, then re-register if reconnecting
-      _channel!.ready.then((_) {
-        dev.log('WebSocket connected');
-        if (_state == OcnConnectionState.reconnecting && _keypair != null) {
-          _reRegister();
-        }
-      }).catchError((e) {
-        dev.log('WebSocket ready error: $e');
-        _onDisconnected();
-      });
+      _channel!.ready
+          .then((_) {
+            dev.log('WebSocket connected');
+            if (_state == OcnConnectionState.reconnecting && _keypair != null) {
+              _reRegister();
+            }
+          })
+          .catchError((e) {
+            dev.log('WebSocket ready error: $e');
+            _onDisconnected();
+          });
 
       _channel!.stream.listen(
         (data) {
@@ -133,7 +161,8 @@ class SignalingClient {
       return;
     }
 
-    if (_state == OcnConnectionState.connected || _state == OcnConnectionState.connecting) {
+    if (_state == OcnConnectionState.connected ||
+        _state == OcnConnectionState.connecting) {
       _setState(OcnConnectionState.reconnecting);
       _scheduleReconnect();
     } else if (_state == OcnConnectionState.reconnecting) {
@@ -188,14 +217,24 @@ class SignalingClient {
     dev.log('Received: ${json.keys.join(", ")}');
 
     if (json.containsKey('challenge_response')) {
-      _handleChallengeResponse(json['challenge_response'] as Map<String, dynamic>);
+      _handleChallengeResponse(
+        json['challenge_response'] as Map<String, dynamic>,
+      );
     } else if (json.containsKey('register_response')) {
-      _handleRegisterResponse(json['register_response'] as Map<String, dynamic>);
+      _handleRegisterResponse(
+        json['register_response'] as Map<String, dynamic>,
+      );
     } else if (json.containsKey('incoming_call')) {
       final call = json['incoming_call'] as Map<String, dynamic>;
-      dev.log('Incoming call: ${call['call_id']} from ${call['caller_number']}');
-      final callerNum = OcnPhoneNumber.fromJson(call['caller_number'] as Map<String, dynamic>);
-      final callerName = (call['caller_name'] as Map<String, dynamic>?)?['name'] as String? ?? '';
+      dev.log(
+        'Incoming call: ${call['call_id']} from ${call['caller_number']}',
+      );
+      final callerNum = OcnPhoneNumber.fromJson(
+        call['caller_number'] as Map<String, dynamic>,
+      );
+      final callerName =
+          (call['caller_name'] as Map<String, dynamic>?)?['name'] as String? ??
+          '';
       final offer = call['offer'] as Map<String, dynamic>;
       onIncomingCall?.call(
         call['call_id'] as String,
@@ -243,36 +282,52 @@ class SignalingClient {
     final nonce = base64Decode(json['nonce'] as String);
     final timestamp = json['timestamp'] as int;
 
-    _pendingKeypair!.signChallenge(Uint8List.fromList(nonce), timestamp).then((signature) {
-      _send({
-        'register': {
-          'ksim_id': {
-            'public_key': _pendingKeypair!.encodePublicKey(),
-          },
-          'challenge_response': {
-            'signature': base64Encode(signature),
-          },
-          'display_name': {
-            'name': _pendingDisplayName ?? '',
-          },
-          if (_pendingActivationToken.isNotEmpty)
-            'activation_token': _pendingActivationToken,
-        },
-      });
-      _challengeCompleter?.complete();
-    }).catchError((e) {
-      _challengeCompleter?.completeError(e);
-    });
+    _pendingKeypair!
+        .signChallenge(Uint8List.fromList(nonce), timestamp)
+        .then((signature) {
+          _send({
+            'register': {
+              'ksim_id': {'public_key': _pendingKeypair!.encodePublicKey()},
+              'challenge_response': {'signature': base64Encode(signature)},
+              'display_name': {'name': _pendingDisplayName ?? ''},
+              if (_pendingActivationToken.isNotEmpty)
+                'activation_token': _pendingActivationToken,
+            },
+          });
+          _challengeCompleter?.complete();
+        })
+        .catchError((e) {
+          _challengeCompleter?.completeError(e);
+        });
   }
 
   void _handleRegisterResponse(Map<String, dynamic> json) {
     if (json['success'] == true && json['assigned_number'] != null) {
-      final num = OcnPhoneNumber.fromJson(json['assigned_number'] as Map<String, dynamic>);
+      final num = OcnPhoneNumber.fromJson(
+        json['assigned_number'] as Map<String, dynamic>,
+      );
+
+      // Capture any STUN/TURN servers the server provides.
+      final rawIce = json['ice_servers'];
+      if (rawIce is List) {
+        _iceServers = rawIce.map<IceServerConfig>((e) {
+          final m = (e as Map).cast<String, dynamic>();
+          return IceServerConfig(
+            urls: (m['urls'] as List).cast<String>(),
+            username: m['username'] as String?,
+            credential: m['credential'] as String?,
+          );
+        }).toList();
+      }
+
       _setState(OcnConnectionState.connected);
       _resetBackoff();
       onRegistered?.call(num);
     } else {
-      onError?.call(400, json['error_message'] as String? ?? 'Registration failed');
+      onError?.call(
+        400,
+        json['error_message'] as String? ?? 'Registration failed',
+      );
     }
   }
 
@@ -291,9 +346,7 @@ class SignalingClient {
 
     _send({
       'challenge_request': {
-        'ksim_id': {
-          'public_key': keypair.encodePublicKey(),
-        },
+        'ksim_id': {'public_key': keypair.encodePublicKey()},
       },
     });
 
@@ -317,10 +370,7 @@ class SignalingClient {
     _send({
       'call': {
         'destination': destination,
-        'offer': {
-          'sdp': sdp,
-          'type': 'offer',
-        },
+        'offer': {'sdp': sdp, 'type': 'offer'},
       },
     });
   }
@@ -329,23 +379,23 @@ class SignalingClient {
     _send({
       'call_answer': {
         'call_id': callId,
-        'answer': {
-          'sdp': sdp,
-          'type': 'answer',
-        },
+        'answer': {'sdp': sdp, 'type': 'answer'},
       },
     });
   }
 
   void hangup(String callId) {
     _send({
-      'call_hangup': {
-        'call_id': callId,
-      },
+      'call_hangup': {'call_id': callId},
     });
   }
 
-  void sendICECandidate(String callId, String candidate, String sdpMid, int sdpMLineIndex) {
+  void sendICECandidate(
+    String callId,
+    String candidate,
+    String sdpMid,
+    int sdpMLineIndex,
+  ) {
     _send({
       'ice_candidate': {
         'call_id': callId,
@@ -360,9 +410,7 @@ class SignalingClient {
 
   void registerFCM(String token) {
     _send({
-      'register_fcm': {
-        'token': token,
-      },
+      'register_fcm': {'token': token},
     });
   }
 
@@ -371,7 +419,8 @@ class SignalingClient {
   }
 
   void _send(Map<String, dynamic> message) {
-    if (_state != OcnConnectionState.connected && _state != OcnConnectionState.connecting) {
+    if (_state != OcnConnectionState.connected &&
+        _state != OcnConnectionState.connecting) {
       dev.log('Cannot send: not connected');
       return;
     }

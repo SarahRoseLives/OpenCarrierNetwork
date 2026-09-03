@@ -1,0 +1,20 @@
+{
+  "host": "0.0.0.0",
+  "port": 9100,
+  "server_name": "Alpha",
+  "description": "OCN Alpha exchange",
+  "server_key_path": "/opt/ocn-alpha/server.key",
+  "database_path": "/opt/ocn-alpha/alpha.db",
+  "voicemail_path": "/opt/ocn-alpha/voicemail/",
+  "admin_host": "127.0.0.1",
+  "admin_port": 8080,
+  "public_address": "opencarrier.network:9100",
+  "registry_address": "opencarrier.network:7443",
+  "registry_area_code": "212",
+  "registry_insecure": false,
+  "federation_addr": "0.0.0.0:9110",
+  "federation_public_address": "opencarrier.network:9110",
+  "federation_insecure": false,
+  "tls_cert_file": "/opt/ocn-alpha/tls/fullchain.pem",
+  "tls_key_file": "/opt/ocn-alpha/tls/privkey.pem"
+}

@@ -1,6 +1,8 @@
 package signaling
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,11 +12,13 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/open-carrier-network/ocn/internal/auth"
-	"github.com/open-carrier-network/ocn/internal/fcm"
 	"github.com/open-carrier-network/ocn/internal/numbers"
+	"github.com/open-carrier-network/ocn/internal/push"
 	"github.com/open-carrier-network/ocn/internal/services"
 	"github.com/open-carrier-network/ocn/internal/store"
+	ocnserverpb "github.com/open-carrier-network/ocn/proto/ocnserver"
 	"github.com/pion/webrtc/v3"
+	"google.golang.org/grpc"
 )
 
 var upgrader = websocket.Upgrader{
@@ -42,15 +46,27 @@ type Server struct {
 	services     *services.Registry
 	svcCalls     map[string]*serviceCall // key: callID
 	pendingCalls map[string]*pendingCall // key: callee number (offline, waiting for FCM wake)
-	fcmClient    *fcm.Client
+	pusher       push.Sender
+	iceServers   []IceServer // STUN/TURN handed to clients on registration
 	mu           sync.RWMutex
+
+	// Federation (registry + inter-server calls)
+	reg         registryClient // nil when standalone
+	insecureFed bool           // plaintext inter-server gRPC (dev)
+	gConns      map[string]*grpc.ClientConn
+	outLegs     map[string]*outLeg // callID -> this server is the caller, callee remote
+	inLegs      map[string]*inLeg  // callID -> this server hosts the callee, caller remote
+	fedMu       sync.RWMutex
 }
 
 // pendingCall is a call to a callee that was offline. We store it so that when
 // the callee reconnects (woken by the FCM push) the call is delivered to them.
+// For a cross-server call, remote marks that the caller is a remote server
+// reached over an inbound bridge leg (caller == nil).
 type pendingCall struct {
 	callID    string
 	caller    *Client
+	remote    bool
 	offer     *SDPSession
 	createdAt time.Time
 }
@@ -60,7 +76,13 @@ type serviceCall struct {
 	service services.Service
 }
 
-func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, areaCode string, reg *services.Registry, fcmClient *fcm.Client) *Server {
+// registryClient is the subset of the registry client the signaling server
+// needs for routing.
+type registryClient interface {
+	Route(ctx context.Context, area string) (string, error)
+}
+
+func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, areaCode string, reg *services.Registry, pusher push.Sender) *Server {
 	srv := &Server{
 		store:        s,
 		auth:         a,
@@ -70,10 +92,80 @@ func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, ar
 		services:     reg,
 		svcCalls:     make(map[string]*serviceCall),
 		pendingCalls: make(map[string]*pendingCall),
-		fcmClient:    fcmClient,
+		pusher:       pusher,
+		gConns:       make(map[string]*grpc.ClientConn),
+		outLegs:      make(map[string]*outLeg),
+		inLegs:       make(map[string]*inLeg),
 	}
 	go srv.expirePendingCalls()
 	return srv
+}
+
+// SetRegistry attaches a registry client so cross-server calls can be routed.
+// Safe to call after startup (hot federation).
+func (srv *Server) SetRegistry(reg registryClient) {
+	srv.fedMu.Lock()
+	srv.reg = reg
+	srv.fedMu.Unlock()
+}
+
+// SetFedInsecure toggles plaintext inter-server gRPC (local development only).
+func (srv *Server) SetFedInsecure(v bool) {
+	srv.fedMu.Lock()
+	srv.insecureFed = v
+	srv.fedMu.Unlock()
+}
+
+// SetAreaCode updates the server's area code at runtime (hot federation).
+func (srv *Server) SetAreaCode(a string) {
+	srv.fedMu.Lock()
+	srv.areaCode = a
+	srv.fedMu.Unlock()
+}
+
+// SetPusher updates the FCM wake-up sender at runtime.
+func (srv *Server) SetPusher(p push.Sender) {
+	srv.fedMu.Lock()
+	srv.pusher = p
+	srv.fedMu.Unlock()
+}
+
+func (srv *Server) area() string {
+	srv.fedMu.RLock()
+	defer srv.fedMu.RUnlock()
+	return srv.areaCode
+}
+
+func (srv *Server) registry() registryClient {
+	srv.fedMu.RLock()
+	defer srv.fedMu.RUnlock()
+	return srv.reg
+}
+
+func (srv *Server) pushSender() push.Sender {
+	srv.fedMu.RLock()
+	defer srv.fedMu.RUnlock()
+	return srv.pusher
+}
+
+func (srv *Server) fedInsecure() bool {
+	srv.fedMu.RLock()
+	defer srv.fedMu.RUnlock()
+	return srv.insecureFed
+}
+
+// SetICEServers configures the STUN/TURN servers handed to clients on
+// registration (typically fetched from the registry).
+func (srv *Server) SetICEServers(servers []IceServer) {
+	srv.fedMu.Lock()
+	srv.iceServers = servers
+	srv.fedMu.Unlock()
+}
+
+func (srv *Server) clientIceServers() []IceServer {
+	srv.fedMu.RLock()
+	defer srv.fedMu.RUnlock()
+	return srv.iceServers
 }
 
 // HandleWebSocket handles incoming WebSocket connections
@@ -206,7 +298,7 @@ func (srv *Server) handleRegister(client *Client, msg *RegisterRequest) {
 		num, err := srv.store.ProvisionUser(
 			store.HashToken(msg.ActivationToken),
 			msg.KsimID.PublicKey,
-			srv.areaCode,
+			srv.area(),
 			displayName,
 		)
 		if err != nil {
@@ -237,7 +329,7 @@ func (srv *Server) handleRegister(client *Client, msg *RegisterRequest) {
 
 		user = &store.User{
 			KSimPublicKey: msg.KsimID.PublicKey,
-			AreaCode:      srv.areaCode,
+			AreaCode:      srv.area(),
 			Number:        num,
 			DisplayName:   displayName,
 			RegisteredAt:  time.Now(),
@@ -263,6 +355,7 @@ func (srv *Server) handleRegister(client *Client, msg *RegisterRequest) {
 				AreaCode: user.AreaCode,
 				Number:   user.Number,
 			},
+			IceServers: srv.clientIceServers(),
 		},
 	})
 
@@ -296,18 +389,23 @@ func (srv *Server) handleCall(client *Client, msg *CallRequest) {
 		return
 	}
 
-	areaCode, localNum, err := numbers.ParseNumber(msg.Destination, srv.areaCode)
+	areaCode, localNum, err := numbers.ParseNumber(msg.Destination, srv.area())
 	if err != nil {
 		log.Printf("Call failed: invalid destination: %v", err)
 		srv.sendError(client, 400, "invalid destination: "+err.Error())
 		return
 	}
 
-	log.Printf("Parsed: areaCode=%q localNum=%q (server areaCode=%q)", areaCode, localNum, srv.areaCode)
+	log.Printf("Parsed: areaCode=%q localNum=%q (server areaCode=%q)", areaCode, localNum, srv.area())
 
 	// If we have an area code and it doesn't match, it's a cross-server call
-	if srv.areaCode != "" && areaCode != srv.areaCode {
-		srv.sendError(client, 501, "cross-server calls not yet implemented")
+	if srv.area() != "" && areaCode != srv.area() {
+		reg := srv.registry()
+		if reg == nil {
+			srv.sendError(client, 501, "cross-server calls require registry federation")
+			return
+		}
+		srv.startCrossCall(client, reg, areaCode, localNum, msg.Offer)
 		return
 	}
 
@@ -325,7 +423,8 @@ func (srv *Server) handleCall(client *Client, msg *CallRequest) {
 			return
 		}
 
-		if srv.fcmClient == nil {
+		pusher := srv.pushSender()
+		if pusher == nil {
 			srv.sendError(client, 404, "user not online")
 			return
 		}
@@ -349,7 +448,7 @@ func (srv *Server) handleCall(client *Client, msg *CallRequest) {
 		client.callID = callID
 		client.mu.Unlock()
 
-		if err := srv.fcmClient.SendCallNotification(
+		if err := pusher.SendCallNotification(
 			callee.FCMToken, callID, client.user.Number, callerName,
 		); err != nil {
 			log.Printf("FCM push failed: %v", err)
@@ -472,6 +571,25 @@ func (srv *Server) handleCallAnswer(client *Client, msg *CallAnswer) {
 
 	log.Printf("Call answer from %s for call %s", client.user.Number, msg.CallID)
 
+	// Cross-server inbound: forward the answer to the remote caller.
+	srv.fedMu.Lock()
+	leg := srv.inLegs[msg.CallID]
+	srv.fedMu.Unlock()
+	if leg != nil {
+		if leg.callee == nil {
+			leg.callee = client
+		}
+		if err := leg.snd(&ocnserverpb.CallEvent{
+			CallId: msg.CallID,
+			Type:   ocnserverpb.CallEvent_ANSWER,
+			Sdp:    sdpToCommon(msg.Answer),
+		}); err != nil {
+			log.Printf("Forward answer across bridge: %v", err)
+		}
+		log.Printf("Bridge answer forwarded for %s", msg.CallID)
+		return
+	}
+
 	srv.mu.RLock()
 	var callerClient *Client
 	for _, c := range srv.clients {
@@ -514,6 +632,12 @@ func (srv *Server) handleCallHangup(client *Client, msg *CallHangup) {
 
 	if callID == "" {
 		log.Printf("No active call to hangup for %s", client.user.Number)
+		return
+	}
+
+	// Cross-server leg: tell the remote side we hung up.
+	if srv.closeLocalLeg(client, callID, "hangup") {
+		log.Printf("Cross call %s hung up by %s", callID, client.user.Number)
 		return
 	}
 
@@ -575,6 +699,34 @@ func (srv *Server) handleICECandidate(client *Client, msg *ICECandidateTrickle) 
 		return
 	}
 
+	// Cross-server ICE: relay between the local WS client and the remote leg.
+	srv.fedMu.Lock()
+	oLeg, oIsOut := srv.outLegs[msg.CallID]
+	iLeg, iIsIn := srv.inLegs[msg.CallID]
+	srv.fedMu.Unlock()
+	if oIsOut {
+		// Local caller's candidate -> remote callee.
+		if err := oLeg.snd(&ocnserverpb.CallEvent{
+			CallId:    msg.CallID,
+			Type:      ocnserverpb.CallEvent_ICE,
+			Candidate: iceToCommon(msg.Candidate),
+		}); err != nil {
+			log.Printf("Bridge ICE send failed: %v", err)
+		}
+		return
+	}
+	if iIsIn && iLeg.callee == client {
+		// Local callee's candidate -> remote caller.
+		if err := iLeg.snd(&ocnserverpb.CallEvent{
+			CallId:    msg.CallID,
+			Type:      ocnserverpb.CallEvent_ICE,
+			Candidate: iceToCommon(msg.Candidate),
+		}); err != nil {
+			log.Printf("Bridge ICE send failed: %v", err)
+		}
+		return
+	}
+
 	// Regular call - forward to other client
 	srv.mu.RLock()
 	for _, c := range srv.clients {
@@ -616,10 +768,32 @@ func (srv *Server) deliverPendingCall(callee *Client) {
 		return
 	}
 
-	// If the caller gave up or disconnected while waiting, don't ring.
-	if !srv.isOnline(p.caller) {
-		log.Printf("Pending call %s dropped: caller offline", p.callID)
-		return
+	var callerArea, callerNum, callerName string
+	remote := p.remote
+	if remote {
+		// Caller is on a remote server; caller info lives on the bridge leg.
+		srv.fedMu.Lock()
+		leg := srv.inLegs[p.callID]
+		if leg != nil {
+			leg.callee = callee
+			callerArea = leg.callerArea
+			callerNum = leg.callerNum
+			callerName = leg.callerName
+		}
+		srv.fedMu.Unlock()
+		if leg == nil {
+			log.Printf("Pending cross call %s dropped: remote leg gone", p.callID)
+			return
+		}
+	} else {
+		// If the caller gave up or disconnected while waiting, don't ring.
+		if !srv.isOnline(p.caller) {
+			log.Printf("Pending call %s dropped: caller offline", p.callID)
+			return
+		}
+		callerArea = p.caller.user.AreaCode
+		callerNum = p.caller.user.Number
+		callerName = p.caller.user.DisplayName
 	}
 
 	log.Printf("Delivering pending call %s to %s", p.callID, callee.user.Number)
@@ -628,17 +802,19 @@ func (srv *Server) deliverPendingCall(callee *Client) {
 		IncomingCall: &IncomingCall{
 			CallID: p.callID,
 			CallerNumber: &PhoneNumber{
-				AreaCode: p.caller.user.AreaCode,
-				Number:   p.caller.user.Number,
+				AreaCode: callerArea,
+				Number:   callerNum,
 			},
-			CallerName: &DisplayName{Name: p.caller.user.DisplayName},
+			CallerName: &DisplayName{Name: callerName},
 			Offer:      p.offer,
 		},
 	})
 
-	p.caller.mu.Lock()
-	p.caller.callID = p.callID
-	p.caller.mu.Unlock()
+	if !remote {
+		p.caller.mu.Lock()
+		p.caller.callID = p.callID
+		p.caller.mu.Unlock()
+	}
 	callee.mu.Lock()
 	callee.callID = p.callID
 	callee.mu.Unlock()
@@ -652,6 +828,24 @@ func (srv *Server) removePendingByCallID(callID string) bool {
 			delete(srv.pendingCalls, num)
 			return true
 		}
+	}
+	return false
+}
+
+// closeLocalLeg notifies the remote side when a local WS client (caller or
+// callee) is ending a cross-server call. Returns true when handled.
+func (srv *Server) closeLocalLeg(client *Client, callID, reason string) bool {
+	srv.fedMu.Lock()
+	defer srv.fedMu.Unlock()
+	if leg, ok := srv.outLegs[callID]; ok {
+		delete(srv.outLegs, callID)
+		_ = leg.snd(&ocnserverpb.CallEvent{CallId: callID, Type: ocnserverpb.CallEvent_HANGUP, Reason: reason})
+		return true
+	}
+	if leg, ok := srv.inLegs[callID]; ok && leg.callee == client {
+		delete(srv.inLegs, callID)
+		_ = leg.snd(&ocnserverpb.CallEvent{CallId: callID, Type: ocnserverpb.CallEvent_HANGUP, Reason: reason})
+		return true
 	}
 	return false
 }
@@ -672,6 +866,21 @@ func (srv *Server) expirePendingCalls() {
 
 		for _, p := range expired {
 			log.Printf("Pending call %s expired (no answer)", p.callID)
+			if p.remote {
+				// Notify the remote caller and drop the leg.
+				srv.fedMu.Lock()
+				leg := srv.inLegs[p.callID]
+				delete(srv.inLegs, p.callID)
+				srv.fedMu.Unlock()
+				if leg != nil {
+					_ = leg.snd(&ocnserverpb.CallEvent{
+						CallId: p.callID,
+						Type:   ocnserverpb.CallEvent_HANGUP,
+						Reason: "no answer",
+					})
+				}
+				continue
+			}
 			if srv.isOnline(p.caller) {
 				p.caller.mu.Lock()
 				p.caller.callID = ""
@@ -696,7 +905,8 @@ func (srv *Server) OnlineNumbers() map[string]bool {
 	return out
 }
 
-func (srv *Server) unregisterClient(client *Client) {	if client.user == nil {
+func (srv *Server) unregisterClient(client *Client) {
+	if client.user == nil {
 		return
 	}
 
@@ -706,6 +916,9 @@ func (srv *Server) unregisterClient(client *Client) {	if client.user == nil {
 	client.mu.Unlock()
 
 	if callID != "" {
+		// Notify a remote leg if this client was in a cross-server call.
+		srv.closeLocalLeg(client, callID, "disconnect")
+
 		// If the caller disconnects while the call is still pending, drop it.
 		srv.removePendingByCallID(callID)
 
@@ -750,5 +963,9 @@ func (srv *Server) sendError(client *Client, code int, message string) {
 }
 
 func generateCallID() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return fmt.Sprintf("%x%x", time.Now().UnixNano(), b)
+	}
 	return fmt.Sprintf("%x", time.Now().UnixNano())
 }

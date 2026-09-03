@@ -45,13 +45,7 @@ class CallSession {
   bool get isService => serviceCode != null;
 }
 
-enum CallState {
-  idle,
-  calling,
-  ringing,
-  connected,
-  ended,
-}
+enum CallState { idle, calling, ringing, connected, ended }
 
 class AppState extends ChangeNotifier {
   AppStatus status = AppStatus.uninitialized;
@@ -68,6 +62,24 @@ class AppState extends ChangeNotifier {
 
   final SignalingClient _signaling;
   final WebRTCManager _webrtc = WebRTCManager();
+
+  /// Builds the flutter_webrtc ICE server list from what the server provided
+  /// (STUN/TURN from the registry), falling back to the built-in default.
+  List<Map<String, dynamic>>? _iceServersForCall() {
+    final servers = _signaling.iceServers;
+    if (servers.isEmpty) return null;
+    return servers
+        .map(
+          (s) => <String, dynamic>{
+            'urls': s.urls,
+            if (s.username != null && s.username!.isNotEmpty)
+              'username': s.username,
+            if (s.credential != null && s.credential!.isNotEmpty)
+              'credential': s.credential,
+          },
+        )
+        .toList();
+  }
 
   String get serverUrl => _signaling.serverUrl;
   bool get isLoggedIn => keypair != null;
@@ -146,11 +158,7 @@ class AppState extends ChangeNotifier {
     _signaling.connect();
 
     await Future.delayed(const Duration(milliseconds: 500));
-    await _signaling.register(
-      keypair!,
-      name,
-      activationToken: activationToken,
-    );
+    await _signaling.register(keypair!, name, activationToken: activationToken);
   }
 
   /// Called by the OS deep-link handler when an ocnksim:// URI arrives.
@@ -242,7 +250,8 @@ class AppState extends ChangeNotifier {
       if (state == OcnConnectionState.reconnecting) {
         status = AppStatus.reconnecting;
         notifyListeners();
-      } else if (state == OcnConnectionState.connected && status == AppStatus.reconnecting) {
+      } else if (state == OcnConnectionState.connected &&
+          status == AppStatus.reconnecting) {
         // Reconnected — status will be set to connected by onRegistered
       }
     };
@@ -271,7 +280,9 @@ class AppState extends ChangeNotifier {
     };
 
     _signaling.onIncomingCall = (callId, caller, callerName, sdp) {
-      log('AppState: incoming call $callId from ${caller.formatted} ($callerName)');
+      log(
+        'AppState: incoming call $callId from ${caller.formatted} ($callerName)',
+      );
       // Clear any FCM full-screen notification; the WebSocket delivery means
       // the call is real, and the ringer below takes over.
       CallNotifications.cancelIncomingCall(callId);
@@ -303,10 +314,15 @@ class AppState extends ChangeNotifier {
       }
     };
 
-    _signaling.onCallConnected = (callId, sdpAnswer, serviceCode, serviceName) async {
-      log('AppState: call connected $callId (hasAnswer=${sdpAnswer != null}, service=$serviceName)');
+    _signaling
+        .onCallConnected = (callId, sdpAnswer, serviceCode, serviceName) async {
+      log(
+        'AppState: call connected $callId (hasAnswer=${sdpAnswer != null}, service=$serviceName)',
+      );
       // Match by callId, or accept if we're an outgoing call with no callId yet (service calls skip ringing)
-      if (activeCall != null && (activeCall!.callId == callId || (activeCall!.callId.isEmpty && !activeCall!.isIncoming))) {
+      if (activeCall != null &&
+          (activeCall!.callId == callId ||
+              (activeCall!.callId.isEmpty && !activeCall!.isIncoming))) {
         activeCall!.callId = callId;
         activeCall!.state = CallState.connected;
         activeCall!.serviceCode = serviceCode;
@@ -336,7 +352,8 @@ class AppState extends ChangeNotifier {
     _signaling.onCallEnded = (callId, reason) {
       log('AppState: call ended $callId reason=$reason');
       // Accept if callId matches, or if we have an active call (handles service calls)
-      if (activeCall != null && (activeCall!.callId == callId || callId.isEmpty)) {
+      if (activeCall != null &&
+          (activeCall!.callId == callId || callId.isEmpty)) {
         _cleanupCall();
         notifyListeners();
       }
@@ -388,7 +405,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final pc = await _webrtc.createPeerConnection();
+      final pc = await _webrtc.createPeerConnection(
+        iceServers: _iceServersForCall(),
+      );
       activeCall!.peerConnection = pc;
 
       final localStream = await _webrtc.getLocalStream();
@@ -424,7 +443,8 @@ class AppState extends ChangeNotifier {
       };
 
       pc.onIceConnectionState = (state) {
-        log('AppState: ICE connection state: $state (${activeCall?.callId})'); debugPrint('ICE connection state: $state');
+        log('AppState: ICE connection state: $state (${activeCall?.callId})');
+        debugPrint('ICE connection state: $state');
       };
 
       final offer = await _webrtc.createOffer(pc);
@@ -444,7 +464,9 @@ class AppState extends ChangeNotifier {
     await _stopRinger();
 
     try {
-      final pc = await _webrtc.createPeerConnection();
+      final pc = await _webrtc.createPeerConnection(
+        iceServers: _iceServersForCall(),
+      );
       activeCall!.peerConnection = pc;
 
       final localStream = await _webrtc.getLocalStream();
@@ -480,7 +502,8 @@ class AppState extends ChangeNotifier {
       };
 
       pc.onIceConnectionState = (state) {
-        log('AppState: ICE connection state: $state (${activeCall?.callId})'); debugPrint('ICE connection state: $state');
+        log('AppState: ICE connection state: $state (${activeCall?.callId})');
+        debugPrint('ICE connection state: $state');
       };
 
       if (activeCall!.pendingOfferSdp != null) {

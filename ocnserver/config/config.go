@@ -10,12 +10,11 @@ type Config struct {
 	Host string `json:"host"`
 	Port int    `json:"port"`
 
-	AreaCode       string `json:"area_code"`       // Empty until federated with registry
-	ServerName     string `json:"server_name"`
-	Description    string `json:"description"`
-	ServerKeyPath  string `json:"server_key_path"`
-	DatabasePath   string `json:"database_path"`
-	RegistryAddress string `json:"registry_address,omitempty"` // Set when federating
+	AreaCode      string `json:"area_code"` // Empty until federated with registry
+	ServerName    string `json:"server_name"`
+	Description   string `json:"description"`
+	ServerKeyPath string `json:"server_key_path"`
+	DatabasePath  string `json:"database_path"`
 
 	TLSCertFile string `json:"tls_cert_file,omitempty"`
 	TLSKeyFile  string `json:"tls_key_file,omitempty"`
@@ -23,24 +22,33 @@ type Config struct {
 	VoicemailPath        string `json:"voicemail_path"`
 	MaxVoicemailDuration int    `json:"max_voicemail_duration_seconds"`
 
-	AdminHost string `json:"admin_host,omitempty"` // admin web panel bind host
-	AdminPort int    `json:"admin_port,omitempty"` // admin web panel port (default 8080)
+	AdminHost     string `json:"admin_host,omitempty"`     // admin web panel bind host
+	AdminPort     int    `json:"admin_port,omitempty"`     // admin web panel port (default 8080)
 	PublicAddress string `json:"public_address,omitempty"` // e.g. "192.168.1.240:9100" used in provisioning QR/links
+
+	RegistryAddress  string `json:"registry_address,omitempty"`   // OCN registry gRPC host:port ("" = standalone)
+	RegistryAreaCode string `json:"registry_area_code,omitempty"` // requested area code when federating ("" = auto)
+	RegistryInsecure bool   `json:"registry_insecure,omitempty"`  // plaintext to registry (dev only)
+
+	FedAddr       string `json:"federation_addr,omitempty"`           // inter-server gRPC listen address
+	FedPublicAddr string `json:"federation_public_address,omitempty"` // reachable host:port advertised to registry
+	FedInsecure   bool   `json:"federation_insecure,omitempty"`       // plaintext inter-server gRPC (dev only)
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		Host:         "0.0.0.0",
-		Port:         9100,
-		AreaCode:     "", // No area code until federated
-		ServerName:   "OCN Server",
-		Description:  "Default OCN server",
-		ServerKeyPath: "server.key",
-		DatabasePath: "ocnserver.db",
-		VoicemailPath: "voicemail/",
+		Host:                 "0.0.0.0",
+		Port:                 9100,
+		AreaCode:             "", // No area code until federated
+		ServerName:           "OCN Server",
+		Description:          "Default OCN server",
+		ServerKeyPath:        "server.key",
+		DatabasePath:         "ocnserver.db",
+		VoicemailPath:        "voicemail/",
 		MaxVoicemailDuration: 120,
-		AdminHost: "0.0.0.0",
-		AdminPort: 8080,
+		AdminHost:            "0.0.0.0",
+		AdminPort:            8080,
+		FedAddr:              ":9110",
 	}
 }
 

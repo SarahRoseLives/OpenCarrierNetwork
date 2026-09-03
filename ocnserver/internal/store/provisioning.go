@@ -12,16 +12,16 @@ import (
 
 // ProvisionToken is a one-time activation code issued by the admin panel.
 type ProvisionToken struct {
-	TokenHash   string
-	Number      string // empty => auto-assign at claim
-	DisplayName string
-	Notes       string
-	CreatedBy   string
-	CreatedAt   time.Time
-	ExpiresAt   time.Time
-	Status      string // issued | used | revoked
+	TokenHash     string
+	Number        string // empty => auto-assign at claim
+	DisplayName   string
+	Notes         string
+	CreatedBy     string
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+	Status        string // issued | used | revoked
 	ClaimedPubKey []byte
-	ClaimedAt   time.Time
+	ClaimedAt     time.Time
 }
 
 // ProvisionTokenView is a token as returned to the panel (hash is the lookup

@@ -13,10 +13,10 @@ import (
 )
 
 var (
-	ErrInvalidKeySize    = errors.New("invalid key size")
-	ErrInvalidSignature  = errors.New("invalid signature")
-	ErrInvalidKSimFile   = errors.New("invalid ksim file")
-	ErrChallengeExpired  = errors.New("challenge expired")
+	ErrInvalidKeySize   = errors.New("invalid key size")
+	ErrInvalidSignature = errors.New("invalid signature")
+	ErrInvalidKSimFile  = errors.New("invalid ksim file")
+	ErrChallengeExpired = errors.New("challenge expired")
 )
 
 const (
@@ -33,13 +33,13 @@ type KSim struct {
 
 // KSimFile is the on-disk format for a kSIM identity
 type KSimFile struct {
-	Version       int        `json:"version"`
-	PublicKey     string     `json:"public_key"`     // base64
-	PrivateKey    string     `json:"private_key"`    // base64 (encrypted)
-	DisplayName   string     `json:"display_name"`
-	Server        string     `json:"server"`
-	Number        string     `json:"number"`
-	RegisteredAt  time.Time  `json:"registered_at"`
+	Version      int       `json:"version"`
+	PublicKey    string    `json:"public_key"`  // base64
+	PrivateKey   string    `json:"private_key"` // base64 (encrypted)
+	DisplayName  string    `json:"display_name"`
+	Server       string    `json:"server"`
+	Number       string    `json:"number"`
+	RegisteredAt time.Time `json:"registered_at"`
 }
 
 // Generate creates a new Ed25519 keypair

@@ -161,6 +161,19 @@ func (s *Store) FreeNumberEstimate() (int, error) {
 	return pool - total, nil
 }
 
+// UpdateAreaCodeForUsers stamps the server's area code onto any locally
+// hosted line that was created before this server federated (area_code empty).
+func (s *Store) UpdateAreaCodeForUsers(area string) error {
+	if area == "" {
+		return nil
+	}
+	_, err := s.db.Exec(
+		`UPDATE users SET area_code = ? WHERE area_code = '' OR area_code IS NULL`,
+		area,
+	)
+	return err
+}
+
 func scanUser(rows interface {
 	Scan(dest ...interface{}) error
 }) (*User, error) {

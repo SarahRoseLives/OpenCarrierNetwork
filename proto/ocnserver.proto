@@ -5,6 +5,7 @@ package ocn.ocnserver;
 option go_package = "github.com/open-carrier-network/ocn/proto/ocnserver";
 
 import "common.proto";
+import "google/protobuf/empty.proto";
 
 // OCNServer-to-OCNServer service for cross-server calls
 service OCNServerService {
@@ -12,6 +13,31 @@ service OCNServerService {
   rpc CallAnswered(CallAnsweredRequest) returns (CallAnsweredResponse);
   rpc CallEnded(CallEndedRequest) returns (google.protobuf.Empty);
   rpc ICECandidateExchange(ICEExchangeRequest) returns (ICEExchangeResponse);
+
+  // Bidirectional relay for a cross-server call. The caller's server dials the
+  // callee's server and both exchange CallEvents over the stream.
+  rpc BridgeCall(stream CallEvent) returns (stream CallEvent);
+}
+
+// Events exchanged over BridgeCall between two OCN servers.
+message CallEvent {
+  enum Type {
+    UNKNOWN = 0;
+    INCOMING = 1;   // caller server -> callee server: start a call
+    RINGING = 2;    // callee server -> caller server: callee is ringing
+    ANSWER = 3;     // callee server -> caller server: callee answered (sdp)
+    ICE = 4;        // either direction: a trickled ICE candidate
+    HANGUP = 5;     // either direction: call ended (reason)
+    BUSY = 6;       // callee server -> caller server: callee unavailable
+  }
+  string call_id = 1;
+  Type type = 2;
+  ocn.common.PhoneNumber caller_number = 3;
+  ocn.common.DisplayName caller_name = 4;
+  string destination = 5;           // 7-digit local number being called
+  ocn.common.SDPSession sdp = 6;    // offer (INCOMING) / answer (ANSWER)
+  ocn.common.ICECandidate candidate = 7;
+  string reason = 8;                // HANGUP reason
 }
 
 message IncomingCallRequest {

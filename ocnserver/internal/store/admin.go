@@ -13,9 +13,9 @@ import (
 
 // AdminAccount is a panel login.
 type AdminAccount struct {
-	Username     string
-	MustChange   bool
-	LastLogin    time.Time
+	Username   string
+	MustChange bool
+	LastLogin  time.Time
 }
 
 var (

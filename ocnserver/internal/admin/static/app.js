@@ -83,6 +83,7 @@ document.querySelectorAll(".sidebar nav a").forEach((a) => {
     if (a.dataset.page === "dashboard") loadDashboard();
     if (a.dataset.page === "lines") loadLines();
     if (a.dataset.page === "provision") loadProvisions();
+    if (a.dataset.page === "federation") loadFederation();
   });
 });
 $("logout-link").addEventListener("click", logout);
@@ -283,6 +284,69 @@ async function loadProvisions() {
     );
   } catch (e) { /* ignore */ }
 }
+
+/* Federation */
+async function loadFederation() {
+  try {
+    const d = await api("/api/federation/status");
+    const area = d.area_code || d.server_area_code || "—";
+    const rows = d.configured
+      ? [
+          ["Registry", d.registry_address],
+          ["Insecure", d.registry_insecure ? "yes (dev)" : "no"],
+          ["Requested area code", d.requested_area_code || "(auto)"],
+          ["Federation public address", d.federation_public_address || "—"],
+          ["Assigned area code", area],
+        ]
+      : [["Status", "Standalone — not federated"], ["Assigned area code", area]];
+    $("fed-status").innerHTML =
+      "<h3>Current status</h3>" +
+      rows.map(([k, v]) => `<p><strong>${esc(k)}:</strong> ${esc(v)}</p>`).join("") +
+      (d.configured
+        ? '<p class="muted small">Restart the server to apply. Settings are stored and re-applied on startup.</p>'
+        : '<p class="muted small">Register below to join the network and receive an area code.</p>');
+  } catch (e) {
+    $("fed-status").innerHTML = '<p class="error">' + esc(e.message) + "</p>";
+  }
+}
+
+$("fed-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("fed-error").classList.add("hidden");
+  $("fed-ok").classList.add("hidden");
+  try {
+    const d = await api("/api/federation/register", {
+      method: "POST",
+      body: JSON.stringify({
+        registry_address: $("fed-address").value.trim(),
+        federation_public_address: $("fed-public").value.trim(),
+        requested_area_code: $("fed-area").value.trim(),
+        registry_insecure: $("fed-insecure").checked,
+      }),
+    });
+    $("fed-ok").textContent =
+      "Registered with area code " + d.area_code + ". " + d.message;
+    $("fed-ok").classList.remove("hidden");
+    loadFederation();
+  } catch (err) {
+    $("fed-error").textContent = err.message;
+    $("fed-error").classList.remove("hidden");
+  }
+});
+
+$("fed-clear").addEventListener("click", async () => {
+  if (!confirm("Clear federation settings? The server will run standalone after restart.")) return;
+  try {
+    const d = await api("/api/federation/clear", { method: "POST" });
+    $("fed-ok").textContent = d.message;
+    $("fed-ok").classList.remove("hidden");
+    $("fed-error").classList.add("hidden");
+    loadFederation();
+  } catch (e) {
+    $("fed-error").textContent = e.message;
+    $("fed-error").classList.remove("hidden");
+  }
+});
 
 /* Account */
 $("password-form").addEventListener("submit", async (e) => {

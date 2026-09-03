@@ -1,0 +1,20 @@
+{
+  "host": "0.0.0.0",
+  "port": 9200,
+  "server_name": "Beta",
+  "description": "OCN Beta exchange",
+  "server_key_path": "/opt/ocn-beta/server.key",
+  "database_path": "/opt/ocn-beta/beta.db",
+  "voicemail_path": "/opt/ocn-beta/voicemail/",
+  "admin_host": "127.0.0.1",
+  "admin_port": 8081,
+  "public_address": "opencarrier.network:9200",
+  "registry_address": "opencarrier.network:7443",
+  "registry_area_code": "310",
+  "registry_insecure": false,
+  "federation_addr": "0.0.0.0:9120",
+  "federation_public_address": "opencarrier.network:9120",
+  "federation_insecure": false,
+  "tls_cert_file": "/opt/ocn-beta/tls/fullchain.pem",
+  "tls_key_file": "/opt/ocn-beta/tls/privkey.pem"
+}

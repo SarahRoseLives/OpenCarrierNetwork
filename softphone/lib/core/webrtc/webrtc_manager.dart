@@ -2,23 +2,30 @@ import 'dart:io';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 class WebRTCManager {
-  final Map<String, dynamic> _iceServers = {
+  final Map<String, dynamic> _defaultIce = {
     'iceServers': [
       {'urls': 'stun:stun.l.google.com:19302'},
     ],
   };
 
-  Future<RTCPeerConnection> createPeerConnection() async {
+  /// Creates a PeerConnection using [iceServers] when provided (from the OCN
+  /// server, which may include TURN), otherwise falls back to Google STUN.
+  Future<RTCPeerConnection> createPeerConnection({
+    List<Map<String, dynamic>>? iceServers,
+  }) async {
     final factory = RTCFactoryNative.instance;
-    final pc = await factory.createPeerConnection(_iceServers, {});
+    final config = <String, dynamic>{
+      if (iceServers != null && iceServers.isNotEmpty)
+        'iceServers': iceServers
+      else
+        ..._defaultIce,
+    };
+    final pc = await factory.createPeerConnection(config, {});
     return pc;
   }
 
   Future<MediaStream> getLocalStream() async {
-    final constraints = <String, dynamic>{
-      'audio': true,
-      'video': false,
-    };
+    final constraints = <String, dynamic>{'audio': true, 'video': false};
     final stream = await navigator.mediaDevices.getUserMedia(constraints);
 
     // Route audio through earpiece on Android by default
@@ -47,11 +54,17 @@ class WebRTCManager {
     return answer;
   }
 
-  Future<void> setRemoteDescription(RTCPeerConnection pc, RTCSessionDescription sdp) async {
+  Future<void> setRemoteDescription(
+    RTCPeerConnection pc,
+    RTCSessionDescription sdp,
+  ) async {
     await pc.setRemoteDescription(sdp);
   }
 
-  Future<void> addIceCandidate(RTCPeerConnection pc, RTCIceCandidate candidate) async {
+  Future<void> addIceCandidate(
+    RTCPeerConnection pc,
+    RTCIceCandidate candidate,
+  ) async {
     await pc.addCandidate(candidate);
   }
 }
