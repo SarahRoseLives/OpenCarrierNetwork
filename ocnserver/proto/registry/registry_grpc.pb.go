@@ -24,6 +24,7 @@ const (
 	OCNRegistry_DeregisterOCNServer_FullMethodName = "/ocn.registry.OCNRegistry/DeregisterOCNServer"
 	OCNRegistry_ListOCNServers_FullMethodName      = "/ocn.registry.OCNRegistry/ListOCNServers"
 	OCNRegistry_GetRoute_FullMethodName            = "/ocn.registry.OCNRegistry/GetRoute"
+	OCNRegistry_ResolveService_FullMethodName      = "/ocn.registry.OCNRegistry/ResolveService"
 	OCNRegistry_GetICECandidates_FullMethodName    = "/ocn.registry.OCNRegistry/GetICECandidates"
 	OCNRegistry_PushDevice_FullMethodName          = "/ocn.registry.OCNRegistry/PushDevice"
 )
@@ -38,6 +39,7 @@ type OCNRegistryClient interface {
 	ListOCNServers(ctx context.Context, in *ListOCNServersRequest, opts ...grpc.CallOption) (*ListOCNServersResponse, error)
 	// Routing
 	GetRoute(ctx context.Context, in *GetRouteRequest, opts ...grpc.CallOption) (*GetRouteResponse, error)
+	ResolveService(ctx context.Context, in *ResolveServiceRequest, opts ...grpc.CallOption) (*ResolveServiceResponse, error)
 	// STUN
 	GetICECandidates(ctx context.Context, in *ICECandidateRequest, opts ...grpc.CallOption) (*ICECandidateResponse, error)
 	// Push: lets a registered OCN server wake one of its offline devices using
@@ -93,6 +95,16 @@ func (c *oCNRegistryClient) GetRoute(ctx context.Context, in *GetRouteRequest, o
 	return out, nil
 }
 
+func (c *oCNRegistryClient) ResolveService(ctx context.Context, in *ResolveServiceRequest, opts ...grpc.CallOption) (*ResolveServiceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolveServiceResponse)
+	err := c.cc.Invoke(ctx, OCNRegistry_ResolveService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *oCNRegistryClient) GetICECandidates(ctx context.Context, in *ICECandidateRequest, opts ...grpc.CallOption) (*ICECandidateResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ICECandidateResponse)
@@ -123,6 +135,7 @@ type OCNRegistryServer interface {
 	ListOCNServers(context.Context, *ListOCNServersRequest) (*ListOCNServersResponse, error)
 	// Routing
 	GetRoute(context.Context, *GetRouteRequest) (*GetRouteResponse, error)
+	ResolveService(context.Context, *ResolveServiceRequest) (*ResolveServiceResponse, error)
 	// STUN
 	GetICECandidates(context.Context, *ICECandidateRequest) (*ICECandidateResponse, error)
 	// Push: lets a registered OCN server wake one of its offline devices using
@@ -149,6 +162,9 @@ func (UnimplementedOCNRegistryServer) ListOCNServers(context.Context, *ListOCNSe
 }
 func (UnimplementedOCNRegistryServer) GetRoute(context.Context, *GetRouteRequest) (*GetRouteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetRoute not implemented")
+}
+func (UnimplementedOCNRegistryServer) ResolveService(context.Context, *ResolveServiceRequest) (*ResolveServiceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResolveService not implemented")
 }
 func (UnimplementedOCNRegistryServer) GetICECandidates(context.Context, *ICECandidateRequest) (*ICECandidateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetICECandidates not implemented")
@@ -249,6 +265,24 @@ func _OCNRegistry_GetRoute_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OCNRegistry_ResolveService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolveServiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OCNRegistryServer).ResolveService(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OCNRegistry_ResolveService_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OCNRegistryServer).ResolveService(ctx, req.(*ResolveServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OCNRegistry_GetICECandidates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ICECandidateRequest)
 	if err := dec(in); err != nil {
@@ -307,6 +341,10 @@ var OCNRegistry_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetRoute",
 			Handler:    _OCNRegistry_GetRoute_Handler,
+		},
+		{
+			MethodName: "ResolveService",
+			Handler:    _OCNRegistry_ResolveService_Handler,
 		},
 		{
 			MethodName: "GetICECandidates",

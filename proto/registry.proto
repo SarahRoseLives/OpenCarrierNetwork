@@ -15,6 +15,7 @@ service OCNRegistry {
 
   // Routing
   rpc GetRoute(GetRouteRequest) returns (GetRouteResponse);
+  rpc ResolveService(ResolveServiceRequest) returns (ResolveServiceResponse);
 
   // STUN
   rpc GetICECandidates(ICECandidateRequest) returns (ICECandidateResponse);
@@ -86,6 +87,20 @@ message GetRouteRequest {
 message GetRouteResponse {
   bool found = 1;
   OCNServerInfo ocnserver = 2;
+}
+
+// Resolve a full 800/900 service number to its hosting exchange.
+message ResolveServiceRequest {
+  string full_number = 1;  // 10 digits, e.g. "8007766001"
+}
+
+message ResolveServiceResponse {
+  bool found = 1;
+  OCNServerInfo ocnserver = 2;  // hosting exchange
+  string full_number = 3;
+  string vanity = 4;            // e.g. "ROO-M001"
+  string name = 5;
+  string description = 6;
 }
 
 // STUN

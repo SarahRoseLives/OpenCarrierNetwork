@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OCN Registry Admin</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:#0f1220; color:#e6e9f2; font-size:14px; }
+  .hidden { display:none !important; }
+  .wrap { display:flex; min-height:100vh; }
+  .side { width:210px; background:#1a1f33; border-right:1px solid #2e3550; padding:14px 10px; }
+  .side a { display:block; padding:9px 10px; border-radius:8px; cursor:pointer; }
+  .side a.active { background:#232944; color:#4f7cff; }
+  main { flex:1; padding:24px 28px; }
+  .card { background:#1a1f33; border:1px solid #2e3550; border-radius:10px; padding:16px; margin-bottom:14px; max-width:640px; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; }
+  th,td { text-align:left; padding:8px; border-bottom:1px solid #2e3550; }
+  th { color:#8b93b0; font-size:12px; text-transform:uppercase; }
+  label { display:block; margin:10px 0 4px; color:#8b93b0; font-size:12px; }
+  input, select { width:100%; padding:8px; border-radius:6px; border:1px solid #2e3550; background:#0f1220; color:#e6e9f2; }
+  button { cursor:pointer; padding:8px 14px; border-radius:6px; border:1px solid #2e3550; background:#232944; color:#e6e9f2; }
+  button.primary { background:#4f7cff; border-color:#4f7cff; }
+  .error { color:#ff5f6d; margin-top:8px; }
+  .ok { color:#2fd58a; margin-top:8px; }
+  .login { max-width:360px; margin:12vh auto; }
+</style>
+</head>
+<body>
+<div id="login" class="login hidden">
+  <h2>OCN Registry Admin</h2>
+  <label>Username</label><input id="u" value="admin">
+  <label>Password</label><input id="p" type="password">
+  <div id="lerr" class="error"></div>
+  <button id="loginbtn" class="primary" style="margin-top:12px">Sign in</button>
+</div>
+
+<div id="app" class="wrap hidden">
+  <nav class="side">
+    <div style="font-weight:700;padding:4px 8px 14px">OCN Registry</div>
+    <a data-p="exchanges" class="active">Exchanges</a>
+    <a data-p="services">800/900 Services</a>
+    <a data-p="account">Account</a>
+    <a id="logout">Log out</a>
+  </nav>
+  <main>
+    <section id="exchanges">
+      <h2>Registered exchanges</h2>
+      <table><thead><tr><th>Area</th><th>Name</th><th>Server</th><th>Status</th></tr></thead>
+      <tbody id="exbody"></tbody></table>
+    </section>
+    <section id="services" class="hidden">
+      <h2>800/900 services</h2>
+      <div class="card">
+        <h3 style="margin-top:0">Claim a service number</h3>
+        <label>Full number (10 digits, starts 800/900)</label><input id="full" placeholder="8007766001">
+        <label>Vanity (display only)</label><input id="vanity" placeholder="ROO-M001">
+        <label>Name</label><input id="name" placeholder="OCN Party Room">
+        <label>Description</label><input id="desc">
+        <label>Hosting exchange (area code)</label><input id="host" placeholder="440">
+        <div id="serr" class="error"></div>
+        <div id="sok" class="ok"></div>
+        <button id="claim" class="primary" style="margin-top:10px">Claim</button>
+      </div>
+      <table><thead><tr><th>Number</th><th>Vanity</th><th>Name</th><th>Host</th><th>Status</th><th></th></tr></thead>
+      <tbody id="svbody"></tbody></table>
+    </section>
+    <section id="account" class="hidden">
+      <h2>Change password</h2>
+      <div class="card">
+        <label>Current</label><input id="oldpw" type="password">
+        <label>New</label><input id="newpw" type="password">
+        <div id="aerr" class="error"></div><div id="aok" class="ok"></div>
+        <button id="changepw" class="primary" style="margin-top:10px">Change</button>
+      </div>
+    </section>
+  </main>
+</div>
+<script>
+const KEY='ocn_registry_admin'; let token=localStorage.getItem(KEY)||'';
+const $=id=>document.getElementById(id);
+async function api(p,o={}){ const h={...o.headers}; if(token) h['Authorization']='Bearer '+token;
+  if(o.body) h['Content-Type']='application/json';
+  const r=await fetch('/admin/api'+p,{...o,headers:h});
+  const d=await r.json().catch(()=>({}));
+  if(r.status===401){ logout(); throw new Error('session expired'); }
+  if(!r.ok) throw new Error(d.error||r.statusText); return d; }
+function logout(){ token=''; localStorage.removeItem(KEY); $('app').classList.add('hidden'); $('login').classList.remove('hidden'); }
+function show(p){ document.querySelectorAll('main section').forEach(s=>s.classList.add('hidden')); $(p).classList.remove('hidden');
+  document.querySelectorAll('.side a[data-p]').forEach(a=>a.classList.toggle('active',a.dataset.p===p));
+  if(p==='exchanges') loadExchanges(); if(p==='services') loadServices(); }
+document.querySelectorAll('.side a[data-p]').forEach(a=>a.onclick=()=>show(a.dataset.p));
+$('logout').onclick=logout;
+$('loginbtn').onclick=async()=>{ try{ const r=await fetch('/admin/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('u').value,password:$('p').value})}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'bad login'); token=d.token; localStorage.setItem(KEY,token); $('login').classList.add('hidden'); $('app').classList.remove('hidden'); show('exchanges'); }catch(e){ $('lerr').textContent=e.message; } };
+async function loadExchanges(){ const d=await api('/exchanges'); $('exbody').innerHTML=d.servers.map(s=>`<tr><td>${s.area_code}</td><td>${s.name}</td><td>${s.server_address}</td><td>${s.status}</td></tr>`).join(''); }
+async function loadServices(){ const d=await api('/services'); $('svbody').innerHTML=d.services.map(s=>`<tr><td>${s.full_number}</td><td>${s.vanity||''}</td><td>${s.name}</td><td>${s.host_area}</td><td>${s.status}</td><td>${s.status==='ACTIVE'?`<button onclick="setStatus('${s.full_number}','SUSPENDED')">Suspend</button>`:`<button onclick="setStatus('${s.full_number}','ACTIVE')">Activate</button>`} <button onclick="del('${s.full_number}')">Delete</button></td></tr>`).join(''); }
+async function setStatus(n,st){ await api('/services/'+n+'/status',{method:'POST',body:JSON.stringify({status:st})}); loadServices(); }
+async function del(n){ if(!confirm('Delete service '+n+'?')) return; await api('/services/'+n,{method:'DELETE'}); loadServices(); }
+$('claim').onclick=async()=>{ try{ await api('/services',{method:'POST',body:JSON.stringify({full_number:$('full').value.trim(),vanity:$('vanity').value.trim(),name:$('name').value.trim(),description:$('desc').value.trim(),host_area:$('host').value.trim()})}); $('sok').textContent='Claimed.'; $('serr').textContent=''; loadServices(); }catch(e){ $('serr').textContent=e.message; } };
+$('changepw').onclick=async()=>{ try{ await api('/password',{method:'POST',body:JSON.stringify({old_password:$('oldpw').value,new_password:$('newpw').value})}); $('aok').textContent='Password updated.'; $('aerr').textContent=''; }catch(e){ $('aerr').textContent=e.message; } };
+(async()=>{ if(token){ try{ await api('/me'); $('login').classList.add('hidden'); $('app').classList.remove('hidden'); show('exchanges'); return; }catch(_){ logout(); } } $('login').classList.remove('hidden'); })();
+</script>
+</body>
+</html>

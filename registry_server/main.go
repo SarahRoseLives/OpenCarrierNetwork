@@ -21,11 +21,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	"github.com/open-carrier-network/ocn/registry/internal/adminapi"
 	"github.com/open-carrier-network/ocn/registry/internal/push"
-	registrypb "github.com/open-carrier-network/ocn/registry/proto/registry"
 	"github.com/open-carrier-network/ocn/registry/internal/registrysvc"
 	"github.com/open-carrier-network/ocn/registry/internal/store"
 	"github.com/open-carrier-network/ocn/registry/internal/turn"
+	registrypb "github.com/open-carrier-network/ocn/registry/proto/registry"
 )
 
 //go:embed web
@@ -86,6 +87,7 @@ func main() {
 
 	// Service
 	svc := registrysvc.New(st, pusher, stun)
+	adminHandler := adminapi.New(st).Handler()
 
 	// Embedded TURN relay (enable by setting -turn-public-ip + -turn-password).
 	if *turnIP != "" {
@@ -124,7 +126,7 @@ func main() {
 		}
 		go func() { log.Fatalf("grpc: %v", grpcSrv.Serve(gl)) }()
 		log.Printf("gRPC (plaintext) on %s; website on %s", *grpcAddr, *httpAddr)
-		if err := http.ListenAndServe(*httpAddr, webMux()); err != nil {
+		if err := http.ListenAndServe(*httpAddr, webMux(adminHandler)); err != nil {
 			log.Fatalf("http: %v", err)
 		}
 		return
@@ -165,7 +167,7 @@ func main() {
 	}()
 
 	// --- Website (HTTPS :443) ---
-	webHandler := webMux()
+	webHandler := webMux(adminHandler)
 	site := &http.Server{
 		Addr:              *httpsAddr,
 		Handler:           webHandler,
@@ -199,8 +201,11 @@ func redirectHTTPS(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "https://"+host+r.URL.RequestURI(), http.StatusMovedPermanently)
 }
 
-func webMux() http.Handler {
+func webMux(admin http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	if admin != nil {
+		mux.Handle("/admin/", admin)
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"status":"ok","service":"ocn-registry"}`)

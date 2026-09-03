@@ -33,6 +33,16 @@ type Config struct {
 	FedAddr       string `json:"federation_addr,omitempty"`           // inter-server gRPC listen address
 	FedPublicAddr string `json:"federation_public_address,omitempty"` // reachable host:port advertised to registry
 	FedInsecure   bool   `json:"federation_insecure,omitempty"`       // plaintext inter-server gRPC (dev only)
+
+	// ServiceNumbers lists 800/900 numbers this server hosts.
+	ServiceNumbers map[string]ServiceNumberConfig `json:"service_numbers,omitempty"`
+}
+
+// ServiceNumberConfig describes a hosted 800/900 service.
+type ServiceNumberConfig struct {
+	Name       string `json:"name"`
+	Phrase     string `json:"phrase"` // announcement text (TTS)
+	Conference bool   `json:"conference"`
 }
 
 func DefaultConfig() *Config {

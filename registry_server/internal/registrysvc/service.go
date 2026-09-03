@@ -120,6 +120,29 @@ func (s *Server) GetRoute(ctx context.Context, req *pb.GetRouteRequest) (*pb.Get
 	}, nil
 }
 
+func (s *Server) ResolveService(ctx context.Context, req *pb.ResolveServiceRequest) (*pb.ResolveServiceResponse, error) {
+	sn, host, err := s.store.ResolveService(req.FullNumber)
+	if err != nil {
+		return &pb.ResolveServiceResponse{Found: false, FullNumber: req.FullNumber}, nil
+	}
+	return &pb.ResolveServiceResponse{
+		Found:       true,
+		FullNumber:  sn.FullNumber,
+		Vanity:      sn.Vanity,
+		Name:        sn.Name,
+		Description: sn.Description,
+		Ocnserver: &pb.OCNServerInfo{
+			AreaCode:           host.AreaCode,
+			Name:               host.Name,
+			Description:        host.Description,
+			ServerAddress:      host.ServerAddr,
+			OcnserverPublicKey: host.PublicKey,
+			RegisteredAt:       host.RegisteredAt.Unix(),
+			Status:             host.Status,
+		},
+	}, nil
+}
+
 func (s *Server) GetICECandidates(ctx context.Context, req *pb.ICECandidateRequest) (*pb.ICECandidateResponse, error) {
 	resp := &pb.ICECandidateResponse{}
 

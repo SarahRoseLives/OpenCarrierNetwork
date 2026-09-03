@@ -52,22 +52,54 @@ func Open(path string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		return nil, err
 	}
+	if err := s.EnsureDefaultAdmin(); err != nil {
+		return nil, fmt.Errorf("seed default admin: %w", err)
+	}
 	return s, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS ocn_servers (
-		area_code TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		description TEXT NOT NULL DEFAULT '',
-		server_address TEXT NOT NULL,
-		public_key BLOB NOT NULL,
-		registered_at INTEGER NOT NULL,
-		status TEXT NOT NULL DEFAULT 'ACTIVE'
-	)`)
-	return err
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS ocn_servers (
+			area_code TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			server_address TEXT NOT NULL,
+			public_key BLOB NOT NULL,
+			registered_at INTEGER NOT NULL,
+			status TEXT NOT NULL DEFAULT 'ACTIVE'
+		)`,
+		`CREATE TABLE IF NOT EXISTS service_numbers (
+			full_number TEXT PRIMARY KEY,
+			vanity TEXT NOT NULL DEFAULT '',
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			host_area TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'ACTIVE',
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS admin_accounts (
+			username TEXT PRIMARY KEY,
+			password_hash TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_login INTEGER NOT NULL DEFAULT 0,
+			must_change INTEGER NOT NULL DEFAULT 1
+		)`,
+		`CREATE TABLE IF NOT EXISTS admin_sessions (
+			token_hash TEXT PRIMARY KEY,
+			username TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)`,
+	}
+	for _, q := range stmts {
+		if _, err := s.db.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AllowedArea reports whether a 3-digit code may be assigned.

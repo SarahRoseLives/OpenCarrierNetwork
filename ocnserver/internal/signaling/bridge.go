@@ -7,8 +7,10 @@ import (
 	"log"
 	"time"
 
+	"github.com/open-carrier-network/ocn/internal/services"
 	commonpb "github.com/open-carrier-network/ocn/proto/common"
 	ocnserverpb "github.com/open-carrier-network/ocn/proto/ocnserver"
+	"github.com/pion/webrtc/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -21,7 +23,8 @@ type outLeg struct {
 }
 
 // inLeg is an inbound cross-server leg: this server hosts the CALLEE and the
-// caller is on a remote server. callee is nil until the local user is online.
+// caller is on a remote server. callee is nil until the local user is online;
+// service is set when this is a hosted 800/900 network service.
 type inLeg struct {
 	snd        func(ev *ocnserverpb.CallEvent) error
 	callee     *Client
@@ -29,6 +32,7 @@ type inLeg struct {
 	callerArea string
 	callerNum  string
 	callerName string
+	service    services.Service
 }
 
 // eventSender adapts a gRPC bridge stream's Send for the leg maps.
@@ -128,6 +132,55 @@ func (srv *Server) startCrossCall(client *Client, reg registryClient, remoteArea
 	go srv.outboundReadLoop(stream, callID, client)
 }
 
+// startServiceCall bridges a call to a full 800/900 service number hosted on
+// the given remote server (resolved via the registry).
+func (srv *Server) startServiceCall(client *Client, addr, fullNumber string, offer *SDPSession) {
+	if client.user == nil {
+		srv.sendError(client, 401, "not registered")
+		return
+	}
+	conn, err := srv.bridgeConn(addr, srv.fedInsecure())
+	if err != nil {
+		srv.sendError(client, 502, "service host unreachable")
+		return
+	}
+	svc := ocnserverpb.NewOCNServerServiceClient(conn)
+	stream, err := svc.BridgeCall(context.Background())
+	if err != nil {
+		srv.sendError(client, 502, "service host unreachable")
+		return
+	}
+
+	callID := generateCallID()
+	callerName := client.user.DisplayName
+	if callerName == "" {
+		callerName = client.user.Number
+	}
+	if err := stream.Send(&ocnserverpb.CallEvent{
+		CallId: callID,
+		Type:   ocnserverpb.CallEvent_INCOMING,
+		CallerNumber: &commonpb.PhoneNumber{
+			AreaCode: srv.area(),
+			Number:   client.user.Number,
+		},
+		CallerName:  &commonpb.DisplayName{Name: callerName},
+		Destination: fullNumber,
+		Sdp:         sdpToCommon(offer),
+	}); err != nil {
+		srv.sendError(client, 502, "service host unreachable")
+		return
+	}
+
+	client.mu.Lock()
+	client.callID = callID
+	client.mu.Unlock()
+	srv.fedMu.Lock()
+	srv.outLegs[callID] = &outLeg{snd: stream.Send}
+	srv.fedMu.Unlock()
+	log.Printf("Service call %s: %s dialed %s via %s", callID, client.user.Number, fullNumber, addr)
+	go srv.outboundReadLoop(stream, callID, client)
+}
+
 // outboundReadLoop relays events from the remote callee's server to the local
 // caller over its WebSocket.
 func (srv *Server) outboundReadLoop(stream ocnserverpb.OCNServerService_BridgeCallClient, callID string, caller *Client) {
@@ -218,7 +271,9 @@ func (srv *Server) serveInbound(stream ocnserverpb.OCNServerService_BridgeCallSe
 		for _, callID := range opened {
 			if leg, ok := srv.inLegs[callID]; ok {
 				delete(srv.inLegs, callID)
-				if leg.callee != nil {
+				if leg.service != nil {
+					_ = leg.service.EndCall(callID)
+				} else if leg.callee != nil {
 					leg.callee.mu.Lock()
 					if leg.callee.callID == callID {
 						leg.callee.callID = ""
@@ -252,7 +307,20 @@ func (srv *Server) serveInbound(stream ocnserverpb.OCNServerService_BridgeCallSe
 			srv.fedMu.Lock()
 			leg := srv.inLegs[ev.CallId]
 			srv.fedMu.Unlock()
-			if leg == nil || leg.callee == nil || ev.Candidate == nil {
+			if leg == nil || ev.Candidate == nil {
+				continue
+			}
+			if leg.service != nil {
+				if ice, ok := leg.service.(services.CallICE); ok {
+					if err := ice.HandleCallICE(ev.CallId, commonToICEInit(ev.Candidate)); err != nil {
+						log.Printf("Bridge service ICE error: %v", err)
+					}
+				} else if err := leg.service.HandleICE(commonToICEInit(ev.Candidate)); err != nil {
+					log.Printf("Bridge service ICE error: %v", err)
+				}
+				continue
+			}
+			if leg.callee == nil {
 				continue
 			}
 			srv.sendMessage(leg.callee, &ServerMessage{
@@ -287,6 +355,20 @@ func (srv *Server) inboundIncoming(stream ocnserverpb.OCNServerService_BridgeCal
 		callerNum:  ev.CallerNumber.GetNumber(),
 		callerName: ev.CallerName.GetName(),
 	}
+
+	// Hosted 800/900 network service?
+	if svc := srv.networkService(calleeNum); svc != nil {
+		leg.service = svc
+		srv.fedMu.Lock()
+		srv.inLegs[callID] = leg
+		srv.fedMu.Unlock()
+		if !srv.handleNetService(snd, ev, callID, leg, svc) {
+			srv.removeInLeg(callID)
+			return ""
+		}
+		return callID
+	}
+
 	srv.fedMu.Lock()
 	srv.inLegs[callID] = leg
 	srv.fedMu.Unlock()
@@ -350,6 +432,34 @@ func (srv *Server) inboundIncoming(stream ocnserverpb.OCNServerService_BridgeCal
 	return callID
 }
 
+// handleNetService answers a hosted 800/900 service call over the bridge.
+func (srv *Server) handleNetService(snd func(*ocnserverpb.CallEvent) error, ev *ocnserverpb.CallEvent, callID string, leg *inLeg, svc services.Service) bool {
+	sendICE := func(c webrtc.ICECandidateInit) {
+		snd(&ocnserverpb.CallEvent{
+			CallId:    callID,
+			Type:      ocnserverpb.CallEvent_ICE,
+			Candidate: iceInitToCommon(c),
+		})
+	}
+
+	answer, err := svc.HandleCall(callID, sdpToWebRTC(ev.Sdp), sendICE)
+	if err != nil {
+		log.Printf("Bridge service %s failed: %v", callID, err)
+		snd(&ocnserverpb.CallEvent{CallId: callID, Type: ocnserverpb.CallEvent_BUSY, Reason: "service error"})
+		return false
+	}
+	if err := snd(&ocnserverpb.CallEvent{
+		CallId: callID,
+		Type:   ocnserverpb.CallEvent_ANSWER,
+		Sdp:    &commonpb.SDPSession{Sdp: answer.SDP, Type: answer.Type.String()},
+	}); err != nil {
+		log.Printf("Bridge service %s answer send failed: %v", callID, err)
+		return false
+	}
+	log.Printf("Bridge service %s answered (%s)", callID, leg.calleeNum)
+	return true
+}
+
 func (srv *Server) removeInLeg(callID string) {
 	srv.fedMu.Lock()
 	delete(srv.inLegs, callID)
@@ -366,6 +476,10 @@ func (srv *Server) inboundRemoteHangup(callID, reason string) {
 	srv.fedMu.Unlock()
 	if leg == nil {
 		srv.removePendingByCallID(callID)
+		return
+	}
+	if leg.service != nil {
+		_ = leg.service.EndCall(callID)
 		return
 	}
 	if leg.callee != nil {
@@ -411,4 +525,35 @@ func iceToCommon(c *ICECandidate) *commonpb.ICECandidate {
 		return nil
 	}
 	return &commonpb.ICECandidate{Candidate: c.Candidate, SdpMid: c.SDPMid, SdpMlineIndex: c.SDPMLineIndex}
+}
+
+func sdpToWebRTC(s *commonpb.SDPSession) *webrtc.SessionDescription {
+	typ := webrtc.SDPTypeOffer
+	if s != nil && s.Type == "answer" {
+		typ = webrtc.SDPTypeAnswer
+	}
+	if s == nil {
+		return &webrtc.SessionDescription{Type: typ, SDP: ""}
+	}
+	return &webrtc.SessionDescription{Type: typ, SDP: s.Sdp}
+}
+
+func commonToICEInit(c *commonpb.ICECandidate) webrtc.ICECandidateInit {
+	out := webrtc.ICECandidateInit{Candidate: c.Candidate}
+	mid := c.SdpMid
+	mline := uint16(c.SdpMlineIndex)
+	out.SDPMid = &mid
+	out.SDPMLineIndex = &mline
+	return out
+}
+
+func iceInitToCommon(c webrtc.ICECandidateInit) *commonpb.ICECandidate {
+	out := &commonpb.ICECandidate{Candidate: c.Candidate}
+	if c.SDPMid != nil {
+		out.SdpMid = *c.SDPMid
+	}
+	if c.SDPMLineIndex != nil {
+		out.SdpMlineIndex = int32(*c.SDPMLineIndex)
+	}
+	return out
 }

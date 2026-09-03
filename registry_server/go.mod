@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	firebase.google.com/go/v4 v4.21.0
 	github.com/mattn/go-sqlite3 v1.14.50
+	github.com/pion/turn/v2 v2.1.6
 	golang.org/x/crypto v0.56.0
 	google.golang.org/api v0.297.0
 	google.golang.org/grpc v1.83.2
@@ -45,7 +46,6 @@ require (
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/stun v0.6.1 // indirect
 	github.com/pion/transport/v2 v2.2.1 // indirect
-	github.com/pion/turn/v2 v2.1.6 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.7.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

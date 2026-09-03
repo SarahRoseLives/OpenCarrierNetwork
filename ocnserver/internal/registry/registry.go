@@ -94,6 +94,19 @@ func (c *Client) Route(ctx context.Context, area string) (string, error) {
 	return resp.Ocnserver.ServerAddress, nil
 }
 
+// ResolveService resolves a full 800/900 service number to its hosting server
+// address, or returns an error when not found.
+func (c *Client) ResolveService(ctx context.Context, fullNumber string) (string, error) {
+	resp, err := c.pb.ResolveService(ctx, &registrypb.ResolveServiceRequest{FullNumber: fullNumber})
+	if err != nil {
+		return "", err
+	}
+	if !resp.Found || resp.Ocnserver == nil {
+		return "", fmt.Errorf("service %s not found", fullNumber)
+	}
+	return resp.Ocnserver.ServerAddress, nil
+}
+
 // IceServer mirrors the registry's ICE server description for WebRTC clients.
 type IceServer struct {
 	URLs       []string

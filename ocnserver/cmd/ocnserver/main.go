@@ -190,6 +190,26 @@ func main() {
 			log.Printf("Providing %d ICE server(s) to clients", len(ice))
 		}
 	}
+
+	// Host any 800/900 network services this server is configured to run.
+	for full, cfgSvc := range cfg.ServiceNumbers {
+		if len(full) != 10 || !(full[:3] == "800" || full[:3] == "900") {
+			log.Printf("WARNING: skipping invalid hosted service number %q", full)
+			continue
+		}
+		var svc services.Service
+		if cfgSvc.Conference {
+			svc, err = services.NewConferenceService(tts, cfgSvc.Name, cfgSvc.Phrase)
+		} else {
+			svc, err = services.NewAnnouncementService(tts, cfgSvc.Name, cfgSvc.Phrase)
+		}
+		if err != nil {
+			log.Printf("WARNING: failed to create service %s: %v", full, err)
+			continue
+		}
+		sigServer.RegisterNetworkService(full, svc)
+		log.Printf("Hosting network service %s (%s)", full, cfgSvc.Name)
+	}
 	fedPlaintext := *fedInsecure || cfg.FedInsecure
 	sigServer.SetFedInsecure(fedPlaintext)
 

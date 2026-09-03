@@ -47,7 +47,8 @@ type Server struct {
 	svcCalls     map[string]*serviceCall // key: callID
 	pendingCalls map[string]*pendingCall // key: callee number (offline, waiting for FCM wake)
 	pusher       push.Sender
-	iceServers   []IceServer // STUN/TURN handed to clients on registration
+	iceServers   []IceServer                 // STUN/TURN handed to clients on registration
+	netSvcs      map[string]services.Service // hosted 800/900 numbers
 	mu           sync.RWMutex
 
 	// Federation (registry + inter-server calls)
@@ -80,6 +81,7 @@ type serviceCall struct {
 // needs for routing.
 type registryClient interface {
 	Route(ctx context.Context, area string) (string, error)
+	ResolveService(ctx context.Context, fullNumber string) (string, error)
 }
 
 func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, areaCode string, reg *services.Registry, pusher push.Sender) *Server {
@@ -96,6 +98,7 @@ func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, ar
 		gConns:       make(map[string]*grpc.ClientConn),
 		outLegs:      make(map[string]*outLeg),
 		inLegs:       make(map[string]*inLeg),
+		netSvcs:      make(map[string]services.Service),
 	}
 	go srv.expirePendingCalls()
 	return srv
@@ -166,6 +169,19 @@ func (srv *Server) clientIceServers() []IceServer {
 	srv.fedMu.RLock()
 	defer srv.fedMu.RUnlock()
 	return srv.iceServers
+}
+
+// RegisterNetworkService hosts an 800/900 service number on this server.
+func (srv *Server) RegisterNetworkService(fullNumber string, svc services.Service) {
+	srv.fedMu.Lock()
+	srv.netSvcs[fullNumber] = svc
+	srv.fedMu.Unlock()
+}
+
+func (srv *Server) networkService(fullNumber string) services.Service {
+	srv.fedMu.RLock()
+	defer srv.fedMu.RUnlock()
+	return srv.netSvcs[fullNumber]
 }
 
 // HandleWebSocket handles incoming WebSocket connections
@@ -403,6 +419,18 @@ func (srv *Server) handleCall(client *Client, msg *CallRequest) {
 		reg := srv.registry()
 		if reg == nil {
 			srv.sendError(client, 501, "cross-server calls require registry federation")
+			return
+		}
+		// 800/900 numbers resolve as network services to a hosting server.
+		if areaCode == "800" || areaCode == "900" {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			addr, err := reg.ResolveService(ctx, areaCode+localNum)
+			if err != nil {
+				srv.sendError(client, 404, "service unavailable")
+				return
+			}
+			srv.startServiceCall(client, addr, areaCode+localNum, msg.Offer)
 			return
 		}
 		srv.startCrossCall(client, reg, areaCode, localNum, msg.Offer)

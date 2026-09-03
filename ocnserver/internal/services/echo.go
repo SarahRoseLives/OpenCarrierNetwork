@@ -11,9 +11,13 @@ import (
 )
 
 type EchoService struct {
-	tts   *TTS
-	calls map[string]*echoCall
-	mu    sync.RWMutex
+	tts    *TTS
+	code   string
+	name   string
+	phrase string
+	echo   bool
+	calls  map[string]*echoCall
+	mu     sync.RWMutex
 }
 
 type echoCall struct {
@@ -24,13 +28,30 @@ type echoCall struct {
 
 func NewEchoService(tts *TTS) (*EchoService, error) {
 	return &EchoService{
-		tts:   tts,
-		calls: make(map[string]*echoCall),
+		tts:    tts,
+		code:   "*01",
+		name:   "Echo Test",
+		phrase: "Welcome to OpenCarrier Network's Echo Service",
+		echo:   true,
+		calls:  make(map[string]*echoCall),
 	}, nil
 }
 
-func (e *EchoService) Code() string { return "*01" }
-func (e *EchoService) Name() string { return "Echo Test" }
+// NewAnnouncementService returns a hosted service that speaks a message and
+// holds the call (used for network 800/900 announcement lines).
+func NewAnnouncementService(tts *TTS, name, phrase string) (*EchoService, error) {
+	return &EchoService{
+		tts:    tts,
+		code:   "",
+		name:   name,
+		phrase: phrase,
+		echo:   false,
+		calls:  make(map[string]*echoCall),
+	}, nil
+}
+
+func (e *EchoService) Code() string { return e.code }
+func (e *EchoService) Name() string { return e.name }
 
 func (e *EchoService) HandleCall(callID string, offer *webrtc.SessionDescription, sendICE func(webrtc.ICECandidateInit)) (*webrtc.SessionDescription, error) {
 	log.Printf("EchoService: handling call %s", callID)
@@ -96,7 +117,7 @@ func (e *EchoService) HandleCall(callID string, offer *webrtc.SessionDescription
 		// Play welcome message first, then echo
 		go func() {
 			// Generate and play welcome
-			frames, err := e.tts.GenerateOpusFrames("Welcome to OpenCarrier Network's Echo Service")
+			frames, err := e.tts.GenerateOpusFrames(e.phrase)
 			if err != nil {
 				log.Printf("EchoService: TTS failed: %v", err)
 			} else {
@@ -131,7 +152,13 @@ func (e *EchoService) HandleCall(callID string, offer *webrtc.SessionDescription
 					timestamp += opusFrameSize
 					time.Sleep(20 * time.Millisecond)
 				}
-				log.Printf("EchoService: welcome done, now echoing")
+				log.Printf("EchoService: welcome done")
+			}
+
+			if !e.echo {
+				// Announcement mode: hold the call after speaking.
+				<-call.done
+				return
 			}
 
 			// Now echo received audio

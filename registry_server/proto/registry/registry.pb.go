@@ -615,6 +615,135 @@ func (x *GetRouteResponse) GetOcnserver() *OCNServerInfo {
 	return nil
 }
 
+// Resolve a full 800/900 service number to its hosting exchange.
+type ResolveServiceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FullNumber    string                 `protobuf:"bytes,1,opt,name=full_number,json=fullNumber,proto3" json:"full_number,omitempty"` // 10 digits, e.g. "8007766001"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResolveServiceRequest) Reset() {
+	*x = ResolveServiceRequest{}
+	mi := &file_registry_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResolveServiceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResolveServiceRequest) ProtoMessage() {}
+
+func (x *ResolveServiceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_registry_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResolveServiceRequest.ProtoReflect.Descriptor instead.
+func (*ResolveServiceRequest) Descriptor() ([]byte, []int) {
+	return file_registry_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ResolveServiceRequest) GetFullNumber() string {
+	if x != nil {
+		return x.FullNumber
+	}
+	return ""
+}
+
+type ResolveServiceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Found         bool                   `protobuf:"varint,1,opt,name=found,proto3" json:"found,omitempty"`
+	Ocnserver     *OCNServerInfo         `protobuf:"bytes,2,opt,name=ocnserver,proto3" json:"ocnserver,omitempty"` // hosting exchange
+	FullNumber    string                 `protobuf:"bytes,3,opt,name=full_number,json=fullNumber,proto3" json:"full_number,omitempty"`
+	Vanity        string                 `protobuf:"bytes,4,opt,name=vanity,proto3" json:"vanity,omitempty"` // e.g. "ROO-M001"
+	Name          string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,6,opt,name=description,proto3" json:"description,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResolveServiceResponse) Reset() {
+	*x = ResolveServiceResponse{}
+	mi := &file_registry_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResolveServiceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResolveServiceResponse) ProtoMessage() {}
+
+func (x *ResolveServiceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_registry_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResolveServiceResponse.ProtoReflect.Descriptor instead.
+func (*ResolveServiceResponse) Descriptor() ([]byte, []int) {
+	return file_registry_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ResolveServiceResponse) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
+func (x *ResolveServiceResponse) GetOcnserver() *OCNServerInfo {
+	if x != nil {
+		return x.Ocnserver
+	}
+	return nil
+}
+
+func (x *ResolveServiceResponse) GetFullNumber() string {
+	if x != nil {
+		return x.FullNumber
+	}
+	return ""
+}
+
+func (x *ResolveServiceResponse) GetVanity() string {
+	if x != nil {
+		return x.Vanity
+	}
+	return ""
+}
+
+func (x *ResolveServiceResponse) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ResolveServiceResponse) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
 // STUN
 type ICECandidateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -625,7 +754,7 @@ type ICECandidateRequest struct {
 
 func (x *ICECandidateRequest) Reset() {
 	*x = ICECandidateRequest{}
-	mi := &file_registry_proto_msgTypes[9]
+	mi := &file_registry_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -637,7 +766,7 @@ func (x *ICECandidateRequest) String() string {
 func (*ICECandidateRequest) ProtoMessage() {}
 
 func (x *ICECandidateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_registry_proto_msgTypes[9]
+	mi := &file_registry_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -650,7 +779,7 @@ func (x *ICECandidateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ICECandidateRequest.ProtoReflect.Descriptor instead.
 func (*ICECandidateRequest) Descriptor() ([]byte, []int) {
-	return file_registry_proto_rawDescGZIP(), []int{9}
+	return file_registry_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ICECandidateRequest) GetClientId() []byte {
@@ -671,7 +800,7 @@ type ICECandidateResponse struct {
 
 func (x *ICECandidateResponse) Reset() {
 	*x = ICECandidateResponse{}
-	mi := &file_registry_proto_msgTypes[10]
+	mi := &file_registry_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -683,7 +812,7 @@ func (x *ICECandidateResponse) String() string {
 func (*ICECandidateResponse) ProtoMessage() {}
 
 func (x *ICECandidateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_registry_proto_msgTypes[10]
+	mi := &file_registry_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -696,7 +825,7 @@ func (x *ICECandidateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ICECandidateResponse.ProtoReflect.Descriptor instead.
 func (*ICECandidateResponse) Descriptor() ([]byte, []int) {
-	return file_registry_proto_rawDescGZIP(), []int{10}
+	return file_registry_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ICECandidateResponse) GetCandidates() []*common.ICECandidate {
@@ -732,7 +861,7 @@ type ICEServer struct {
 
 func (x *ICEServer) Reset() {
 	*x = ICEServer{}
-	mi := &file_registry_proto_msgTypes[11]
+	mi := &file_registry_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -744,7 +873,7 @@ func (x *ICEServer) String() string {
 func (*ICEServer) ProtoMessage() {}
 
 func (x *ICEServer) ProtoReflect() protoreflect.Message {
-	mi := &file_registry_proto_msgTypes[11]
+	mi := &file_registry_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -757,7 +886,7 @@ func (x *ICEServer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ICEServer.ProtoReflect.Descriptor instead.
 func (*ICEServer) Descriptor() ([]byte, []int) {
-	return file_registry_proto_rawDescGZIP(), []int{11}
+	return file_registry_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ICEServer) GetUrls() []string {
@@ -831,7 +960,18 @@ const file_registry_proto_rawDesc = "" +
 	"\tarea_code\x18\x01 \x01(\tR\bareaCode\"c\n" +
 	"\x10GetRouteResponse\x12\x14\n" +
 	"\x05found\x18\x01 \x01(\bR\x05found\x129\n" +
-	"\tocnserver\x18\x02 \x01(\v2\x1b.ocn.registry.OCNServerInfoR\tocnserver\"2\n" +
+	"\tocnserver\x18\x02 \x01(\v2\x1b.ocn.registry.OCNServerInfoR\tocnserver\"8\n" +
+	"\x15ResolveServiceRequest\x12\x1f\n" +
+	"\vfull_number\x18\x01 \x01(\tR\n" +
+	"fullNumber\"\xd8\x01\n" +
+	"\x16ResolveServiceResponse\x12\x14\n" +
+	"\x05found\x18\x01 \x01(\bR\x05found\x129\n" +
+	"\tocnserver\x18\x02 \x01(\v2\x1b.ocn.registry.OCNServerInfoR\tocnserver\x12\x1f\n" +
+	"\vfull_number\x18\x03 \x01(\tR\n" +
+	"fullNumber\x12\x16\n" +
+	"\x06vanity\x18\x04 \x01(\tR\x06vanity\x12\x12\n" +
+	"\x04name\x18\x05 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x06 \x01(\tR\vdescription\"2\n" +
 	"\x13ICECandidateRequest\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\fR\bclientId\"\xc4\x01\n" +
 	"\x14ICECandidateResponse\x128\n" +
@@ -846,12 +986,13 @@ const file_registry_proto_rawDesc = "" +
 	"\busername\x18\x02 \x01(\tR\busername\x12\x1e\n" +
 	"\n" +
 	"credential\x18\x03 \x01(\tR\n" +
-	"credential2\x96\x04\n" +
+	"credential2\xf3\x04\n" +
 	"\vOCNRegistry\x12d\n" +
 	"\x11RegisterOCNServer\x12&.ocn.registry.RegisterOCNServerRequest\x1a'.ocn.registry.RegisterOCNServerResponse\x12W\n" +
 	"\x13DeregisterOCNServer\x12(.ocn.registry.DeregisterOCNServerRequest\x1a\x16.google.protobuf.Empty\x12[\n" +
 	"\x0eListOCNServers\x12#.ocn.registry.ListOCNServersRequest\x1a$.ocn.registry.ListOCNServersResponse\x12I\n" +
-	"\bGetRoute\x12\x1d.ocn.registry.GetRouteRequest\x1a\x1e.ocn.registry.GetRouteResponse\x12Y\n" +
+	"\bGetRoute\x12\x1d.ocn.registry.GetRouteRequest\x1a\x1e.ocn.registry.GetRouteResponse\x12[\n" +
+	"\x0eResolveService\x12#.ocn.registry.ResolveServiceRequest\x1a$.ocn.registry.ResolveServiceResponse\x12Y\n" +
 	"\x10GetICECandidates\x12!.ocn.registry.ICECandidateRequest\x1a\".ocn.registry.ICECandidateResponse\x12E\n" +
 	"\n" +
 	"PushDevice\x12\x1f.ocn.registry.PushDeviceRequest\x1a\x16.google.protobuf.EmptyB4Z2github.com/open-carrier-network/ocn/proto/registryb\x06proto3"
@@ -868,7 +1009,7 @@ func file_registry_proto_rawDescGZIP() []byte {
 	return file_registry_proto_rawDescData
 }
 
-var file_registry_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_registry_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_registry_proto_goTypes = []any{
 	(*PushDeviceRequest)(nil),          // 0: ocn.registry.PushDeviceRequest
 	(*RegisterOCNServerRequest)(nil),   // 1: ocn.registry.RegisterOCNServerRequest
@@ -879,34 +1020,39 @@ var file_registry_proto_goTypes = []any{
 	(*ListOCNServersResponse)(nil),     // 6: ocn.registry.ListOCNServersResponse
 	(*GetRouteRequest)(nil),            // 7: ocn.registry.GetRouteRequest
 	(*GetRouteResponse)(nil),           // 8: ocn.registry.GetRouteResponse
-	(*ICECandidateRequest)(nil),        // 9: ocn.registry.ICECandidateRequest
-	(*ICECandidateResponse)(nil),       // 10: ocn.registry.ICECandidateResponse
-	(*ICEServer)(nil),                  // 11: ocn.registry.ICEServer
-	(*common.ICECandidate)(nil),        // 12: ocn.common.ICECandidate
-	(*emptypb.Empty)(nil),              // 13: google.protobuf.Empty
+	(*ResolveServiceRequest)(nil),      // 9: ocn.registry.ResolveServiceRequest
+	(*ResolveServiceResponse)(nil),     // 10: ocn.registry.ResolveServiceResponse
+	(*ICECandidateRequest)(nil),        // 11: ocn.registry.ICECandidateRequest
+	(*ICECandidateResponse)(nil),       // 12: ocn.registry.ICECandidateResponse
+	(*ICEServer)(nil),                  // 13: ocn.registry.ICEServer
+	(*common.ICECandidate)(nil),        // 14: ocn.common.ICECandidate
+	(*emptypb.Empty)(nil),              // 15: google.protobuf.Empty
 }
 var file_registry_proto_depIdxs = []int32{
 	4,  // 0: ocn.registry.ListOCNServersResponse.ocnservers:type_name -> ocn.registry.OCNServerInfo
 	4,  // 1: ocn.registry.GetRouteResponse.ocnserver:type_name -> ocn.registry.OCNServerInfo
-	12, // 2: ocn.registry.ICECandidateResponse.candidates:type_name -> ocn.common.ICECandidate
-	11, // 3: ocn.registry.ICECandidateResponse.ice_servers:type_name -> ocn.registry.ICEServer
-	1,  // 4: ocn.registry.OCNRegistry.RegisterOCNServer:input_type -> ocn.registry.RegisterOCNServerRequest
-	3,  // 5: ocn.registry.OCNRegistry.DeregisterOCNServer:input_type -> ocn.registry.DeregisterOCNServerRequest
-	5,  // 6: ocn.registry.OCNRegistry.ListOCNServers:input_type -> ocn.registry.ListOCNServersRequest
-	7,  // 7: ocn.registry.OCNRegistry.GetRoute:input_type -> ocn.registry.GetRouteRequest
-	9,  // 8: ocn.registry.OCNRegistry.GetICECandidates:input_type -> ocn.registry.ICECandidateRequest
-	0,  // 9: ocn.registry.OCNRegistry.PushDevice:input_type -> ocn.registry.PushDeviceRequest
-	2,  // 10: ocn.registry.OCNRegistry.RegisterOCNServer:output_type -> ocn.registry.RegisterOCNServerResponse
-	13, // 11: ocn.registry.OCNRegistry.DeregisterOCNServer:output_type -> google.protobuf.Empty
-	6,  // 12: ocn.registry.OCNRegistry.ListOCNServers:output_type -> ocn.registry.ListOCNServersResponse
-	8,  // 13: ocn.registry.OCNRegistry.GetRoute:output_type -> ocn.registry.GetRouteResponse
-	10, // 14: ocn.registry.OCNRegistry.GetICECandidates:output_type -> ocn.registry.ICECandidateResponse
-	13, // 15: ocn.registry.OCNRegistry.PushDevice:output_type -> google.protobuf.Empty
-	10, // [10:16] is the sub-list for method output_type
-	4,  // [4:10] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	4,  // 2: ocn.registry.ResolveServiceResponse.ocnserver:type_name -> ocn.registry.OCNServerInfo
+	14, // 3: ocn.registry.ICECandidateResponse.candidates:type_name -> ocn.common.ICECandidate
+	13, // 4: ocn.registry.ICECandidateResponse.ice_servers:type_name -> ocn.registry.ICEServer
+	1,  // 5: ocn.registry.OCNRegistry.RegisterOCNServer:input_type -> ocn.registry.RegisterOCNServerRequest
+	3,  // 6: ocn.registry.OCNRegistry.DeregisterOCNServer:input_type -> ocn.registry.DeregisterOCNServerRequest
+	5,  // 7: ocn.registry.OCNRegistry.ListOCNServers:input_type -> ocn.registry.ListOCNServersRequest
+	7,  // 8: ocn.registry.OCNRegistry.GetRoute:input_type -> ocn.registry.GetRouteRequest
+	9,  // 9: ocn.registry.OCNRegistry.ResolveService:input_type -> ocn.registry.ResolveServiceRequest
+	11, // 10: ocn.registry.OCNRegistry.GetICECandidates:input_type -> ocn.registry.ICECandidateRequest
+	0,  // 11: ocn.registry.OCNRegistry.PushDevice:input_type -> ocn.registry.PushDeviceRequest
+	2,  // 12: ocn.registry.OCNRegistry.RegisterOCNServer:output_type -> ocn.registry.RegisterOCNServerResponse
+	15, // 13: ocn.registry.OCNRegistry.DeregisterOCNServer:output_type -> google.protobuf.Empty
+	6,  // 14: ocn.registry.OCNRegistry.ListOCNServers:output_type -> ocn.registry.ListOCNServersResponse
+	8,  // 15: ocn.registry.OCNRegistry.GetRoute:output_type -> ocn.registry.GetRouteResponse
+	10, // 16: ocn.registry.OCNRegistry.ResolveService:output_type -> ocn.registry.ResolveServiceResponse
+	12, // 17: ocn.registry.OCNRegistry.GetICECandidates:output_type -> ocn.registry.ICECandidateResponse
+	15, // 18: ocn.registry.OCNRegistry.PushDevice:output_type -> google.protobuf.Empty
+	12, // [12:19] is the sub-list for method output_type
+	5,  // [5:12] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_registry_proto_init() }
@@ -920,7 +1066,7 @@ func file_registry_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_registry_proto_rawDesc), len(file_registry_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
