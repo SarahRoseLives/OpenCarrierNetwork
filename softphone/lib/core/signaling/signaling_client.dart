@@ -61,6 +61,7 @@ class SignalingClient {
   // Pending registration state
   KSimKeypair? _pendingKeypair;
   String? _pendingDisplayName;
+  String _pendingActivationToken = '';
   Completer<void>? _challengeCompleter;
 
   SignalingClient({required this.serverUrl});
@@ -254,6 +255,8 @@ class SignalingClient {
           'display_name': {
             'name': _pendingDisplayName ?? '',
           },
+          if (_pendingActivationToken.isNotEmpty)
+            'activation_token': _pendingActivationToken,
         },
       });
       _challengeCompleter?.complete();
@@ -273,10 +276,17 @@ class SignalingClient {
     }
   }
 
-  /// Request a challenge from the server, then register
-  Future<void> register(KSimKeypair keypair, String displayName) async {
+  /// Request a challenge from the server, then register. When [activationToken]
+  /// is provided and this is a brand-new identity, the server provisions a
+  /// number from the admin-issued code.
+  Future<void> register(
+    KSimKeypair keypair,
+    String displayName, {
+    String activationToken = '',
+  }) async {
     _pendingKeypair = keypair;
     _pendingDisplayName = displayName;
+    _pendingActivationToken = activationToken;
     _challengeCompleter = Completer<void>();
 
     _send({

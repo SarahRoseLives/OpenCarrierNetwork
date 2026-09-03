@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../core/ksim/ksim.dart';
 import '../core/notifications/call_notifications.dart';
+import '../core/provision/ocn_ksim_uri.dart';
 import '../core/signaling/signaling_client.dart';
 import '../core/webrtc/webrtc_manager.dart';
 
@@ -70,6 +71,21 @@ class AppState extends ChangeNotifier {
   bool get isLoggedIn => keypair != null;
   bool get isReconnecting => status == AppStatus.reconnecting;
 
+  /// The provisioning link currently being used. Populated by deep links,
+  /// QR scans, and pasted links, and kept while the registration screen is up
+  /// so a failed attempt can be retried without losing the code.
+  OcnKsimUri? pendingProvision;
+
+  void setProvisionIntent(OcnKsimUri provision) {
+    pendingProvision = provision;
+    if (keypair == null) notifyListeners();
+  }
+
+  void clearProvisionIntent() {
+    pendingProvision = null;
+    if (keypair == null) notifyListeners();
+  }
+
   AppState({required String serverUrl})
     : _signaling = SignalingClient(serverUrl: serverUrl);
 
@@ -111,7 +127,11 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> register(String serverUrl, String name) async {
+  Future<void> register(
+    String serverUrl,
+    String name, {
+    String activationToken = '',
+  }) async {
     displayName = name;
     status = AppStatus.connecting;
     notifyListeners();
@@ -124,7 +144,26 @@ class AppState extends ChangeNotifier {
     _signaling.connect();
 
     await Future.delayed(const Duration(milliseconds: 500));
-    await _signaling.register(keypair!, name);
+    await _signaling.register(
+      keypair!,
+      name,
+      activationToken: activationToken,
+    );
+  }
+
+  /// Called by the OS deep-link handler when an ocnksim:// URI arrives.
+  void handleDeepLink(String raw) {
+    final parsed = OcnKsimUri.parse(raw);
+    if (parsed == null) {
+      log('Deep link ignored (not ocnksim provisioning): $raw');
+      return;
+    }
+    if (keypair != null) {
+      log('Deep link ignored (already provisioned)');
+      return;
+    }
+    log('Deep link provisioning for ${parsed.serverUrl}');
+    setProvisionIntent(parsed);
   }
 
   void _connectToServer(String serverUrl) {
@@ -191,6 +230,7 @@ class AppState extends ChangeNotifier {
     keypair = null;
     phoneNumber = null;
     displayName = '';
+    pendingProvision = null;
     status = AppStatus.needsRegistration;
     notifyListeners();
   }

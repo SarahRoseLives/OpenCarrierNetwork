@@ -25,7 +25,7 @@ type Store struct {
 }
 
 func New(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
@@ -34,12 +34,19 @@ func New(dbPath string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
+	if err := s.ensureDefaultAdmin(); err != nil {
+		return nil, fmt.Errorf("seeding default admin: %w", err)
+	}
 
 	return s, nil
 }
 
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+func timeFromUnix(sec int64) time.Time {
+	return time.Unix(sec, 0)
 }
 
 func (s *Store) migrate() error {
@@ -68,6 +75,35 @@ func (s *Store) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_voicemail_recipient ON voicemail(recipient_number)`,
 		// Add fcm_token to pre-existing users tables (created before the column existed)
 		`ALTER TABLE users ADD COLUMN fcm_token TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS admin_accounts (
+			username TEXT PRIMARY KEY,
+			password_hash TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_login INTEGER NOT NULL DEFAULT 0,
+			must_change INTEGER NOT NULL DEFAULT 1
+		)`,
+		`CREATE TABLE IF NOT EXISTS admin_sessions (
+			token_hash TEXT PRIMARY KEY,
+			username TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_sessions_username ON admin_sessions(username)`,
+		`CREATE TABLE IF NOT EXISTS provisioning_tokens (
+			token_hash TEXT PRIMARY KEY,
+			number TEXT,
+			display_name TEXT NOT NULL DEFAULT '',
+			notes TEXT NOT NULL DEFAULT '',
+			created_by TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL,
+			status TEXT NOT NULL DEFAULT 'issued',
+			claimed_pubkey BLOB,
+			claimed_at INTEGER
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_prov_tokens_number
+			ON provisioning_tokens(number) WHERE number IS NOT NULL AND status = 'issued'`,
+		`CREATE INDEX IF NOT EXISTS idx_prov_tokens_status ON provisioning_tokens(status, created_at)`,
 	}
 
 	for _, m := range migrations {

@@ -22,6 +22,10 @@ type Config struct {
 
 	VoicemailPath        string `json:"voicemail_path"`
 	MaxVoicemailDuration int    `json:"max_voicemail_duration_seconds"`
+
+	AdminHost string `json:"admin_host,omitempty"` // admin web panel bind host
+	AdminPort int    `json:"admin_port,omitempty"` // admin web panel port (default 8080)
+	PublicAddress string `json:"public_address,omitempty"` // e.g. "192.168.1.240:9100" used in provisioning QR/links
 }
 
 func DefaultConfig() *Config {
@@ -35,6 +39,8 @@ func DefaultConfig() *Config {
 		DatabasePath: "ocnserver.db",
 		VoicemailPath: "voicemail/",
 		MaxVoicemailDuration: 120,
+		AdminHost: "0.0.0.0",
+		AdminPort: 8080,
 	}
 }
 
@@ -65,4 +71,8 @@ func (c *Config) Save(path string) error {
 
 func (c *Config) Address() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+}
+
+func (c *Config) AdminAddress() string {
+	return fmt.Sprintf("%s:%d", c.AdminHost, c.AdminPort)
 }

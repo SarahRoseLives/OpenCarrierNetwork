@@ -1,4 +1,5 @@
 import 'dart:developer';
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'core/app_state.dart';
@@ -28,6 +29,24 @@ class _OcnSoftphoneAppState extends State<OcnSoftphoneApp> {
     _appState = AppState(serverUrl: 'ws://192.168.1.240:9100/ws');
     _appState.initialize();
     _initFCM();
+    _initLinks();
+  }
+
+  Future<void> _initLinks() async {
+    try {
+      final appLinks = AppLinks();
+      appLinks.uriLinkStream.listen((uri) {
+        log('Deep link: $uri');
+        _appState.handleDeepLink(uri.toString());
+      });
+      final initial = await appLinks.getInitialLink();
+      if (initial != null) {
+        log('Initial deep link: $initial');
+        _appState.handleDeepLink(initial.toString());
+      }
+    } catch (e) {
+      log('Deep link init failed: $e');
+    }
   }
 
   Future<void> _initFCM() async {

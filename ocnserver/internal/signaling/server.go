@@ -201,9 +201,32 @@ func (srv *Server) handleRegister(client *Client, msg *RegisterRequest) {
 	}
 
 	if user == nil {
-		num, err := srv.allocator.Allocate()
+		// Unknown identity: a line may only be created via an admin-issued
+		// provisioning token. No open self-registration.
+		num, err := srv.store.ProvisionUser(
+			store.HashToken(msg.ActivationToken),
+			msg.KsimID.PublicKey,
+			srv.areaCode,
+			displayName,
+		)
 		if err != nil {
-			srv.sendError(client, 500, "failed to allocate number")
+			log.Printf("Provision failed: %v", err)
+			switch {
+			case err == store.ErrTokenRequired:
+				srv.sendError(client, 400, "missing provisioning token in register")
+			case err == store.ErrTokenNotFound:
+				srv.sendError(client, 403, "invalid provisioning token - generate a fresh QR code from the admin panel")
+			case err == store.ErrTokenExpired:
+				srv.sendError(client, 403, "provisioning token has expired - generate a new one")
+			case err == store.ErrTokenUsed:
+				srv.sendError(client, 403, "provisioning token was already used on another phone")
+			case err == store.ErrTokenRevoked:
+				srv.sendError(client, 403, "provisioning token was revoked by the admin")
+			case err == store.ErrNumberTaken:
+				srv.sendError(client, 409, "that number was just taken - generate a new provisioning code")
+			default:
+				srv.sendError(client, 500, "failed to register user")
+			}
 			return
 		}
 
@@ -214,10 +237,6 @@ func (srv *Server) handleRegister(client *Client, msg *RegisterRequest) {
 			DisplayName:   displayName,
 			RegisteredAt:  time.Now(),
 			LastSeen:      time.Now(),
-		}
-		if err := srv.store.CreateUser(user); err != nil {
-			srv.sendError(client, 500, "failed to register user")
-			return
 		}
 	} else {
 		if displayName != "" {
@@ -660,8 +679,19 @@ func (srv *Server) expirePendingCalls() {
 	}
 }
 
-func (srv *Server) unregisterClient(client *Client) {
-	if client.user == nil {
+// OnlineNumbers returns the set of phone numbers with a live WebSocket
+// connection (7-digit local numbers). Used by the admin panel.
+func (srv *Server) OnlineNumbers() map[string]bool {
+	srv.mu.RLock()
+	defer srv.mu.RUnlock()
+	out := make(map[string]bool, len(srv.clients))
+	for num := range srv.clients {
+		out[num] = true
+	}
+	return out
+}
+
+func (srv *Server) unregisterClient(client *Client) {	if client.user == nil {
 		return
 	}
 

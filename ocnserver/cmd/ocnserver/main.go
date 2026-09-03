@@ -11,6 +11,7 @@ import (
 
 	"github.com/open-carrier-network/ocn/config"
 	"github.com/open-carrier-network/ocn/internal/auth"
+	"github.com/open-carrier-network/ocn/internal/admin"
 	"github.com/open-carrier-network/ocn/internal/fcm"
 	"github.com/open-carrier-network/ocn/internal/ksim"
 	"github.com/open-carrier-network/ocn/internal/numbers"
@@ -66,6 +67,16 @@ func main() {
 	// Initialize signaling server
 	sigServer := signaling.NewServer(db, authMgr, allocator, cfg.AreaCode, serviceRegistry, fcmClient)
 
+	// Admin web panel (provisioning + line management) on its own port
+	adminSrv := admin.New(admin.Options{
+		Store:         db,
+		Online:        sigServer.OnlineNumbers,
+		SignalingPort: cfg.Port,
+		PublicAddress: cfg.PublicAddress,
+		AreaCode:      cfg.AreaCode,
+		ServerName:    cfg.ServerName,
+	})
+
 	// Load or generate server keypair
 	if _, err := os.Stat(cfg.ServerKeyPath); os.IsNotExist(err) {
 		log.Printf("Generating new server keypair: %s", cfg.ServerKeyPath)
@@ -107,6 +118,7 @@ func main() {
 	log.Printf("  WebSocket: ws://%s/ws", addr)
 	log.Printf("  Health:    http://%s/health", addr)
 	log.Printf("  Info:      http://%s/info", addr)
+	log.Printf("  Admin:     http://%s/  (default login admin/admin)", cfg.AdminAddress())
 	log.Printf("  Services:  *01 Echo Test")
 	if fcmClient != nil {
 		log.Printf("  FCM:       enabled")
@@ -119,6 +131,14 @@ func main() {
 		<-sigCh
 		log.Println("Shutting down...")
 		os.Exit(0)
+	}()
+
+	// Start admin web panel in its own goroutine
+	go func() {
+		log.Printf("Admin panel listening on %s", cfg.AdminAddress())
+		if err := http.ListenAndServe(cfg.AdminAddress(), adminSrv.Handler()); err != nil {
+			log.Fatalf("Admin panel failed: %v", err)
+		}
 	}()
 
 	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OCN Server Admin</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="login-view" class="login-wrap hidden">
+    <form id="login-form" class="login-card">
+      <h1>OCN Server Admin</h1>
+      <p class="muted">OpenCarrier.Network provisioning panel</p>
+      <label>Username</label>
+      <input id="login-username" autocomplete="username" value="admin">
+      <label>Password</label>
+      <input id="login-password" type="password" autocomplete="current-password">
+      <div id="login-error" class="error hidden"></div>
+      <button type="submit" class="primary">Sign in</button>
+    </form>
+  </div>
+
+  <div id="app-view" class="shell hidden">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="dot"></span> OCN Admin
+      </div>
+      <nav>
+        <a data-page="dashboard" class="active">Dashboard</a>
+        <a data-page="lines">Lines</a>
+        <a data-page="provision">Provision</a>
+        <a data-page="account">Account</a>
+      </nav>
+      <div class="side-foot">
+        <div id="nav-user" class="muted small"></div>
+        <a id="logout-link">Log out</a>
+      </div>
+    </aside>
+
+    <main class="content">
+      <!-- Dashboard -->
+      <section id="page-dashboard">
+        <h2>Dashboard</h2>
+        <div id="stat-cards" class="cards"></div>
+      </section>
+
+      <!-- Lines -->
+      <section id="page-lines" class="hidden">
+        <h2>Lines</h2>
+        <div class="toolbar">
+          <input id="lines-search" placeholder="Search number or name…">
+          <button id="lines-refresh" class="ghost">Refresh</button>
+        </div>
+        <table>
+          <thead><tr>
+            <th>Number</th><th>Display name</th><th>Status</th><th>FCM</th><th>Last seen</th><th></th>
+          </tr></thead>
+          <tbody id="lines-body"></tbody>
+        </table>
+        <div id="lines-empty" class="empty hidden">No lines yet.</div>
+      </section>
+
+      <!-- Provision -->
+      <section id="page-provision" class="hidden">
+        <h2>Provision a line</h2>
+        <form id="provision-form" class="panel">
+          <div class="row">
+            <label>Number</label>
+            <div class="row-inline">
+              <input id="prov-number" placeholder="Auto-assign (leave blank)">
+              <button type="button" id="prov-suggest" class="ghost">Suggest free</button>
+            </div>
+          </div>
+          <div class="row">
+            <label>Display name</label>
+            <input id="prov-name" placeholder="e.g. Rose">
+          </div>
+          <div class="row">
+            <label>Notes</label>
+            <input id="prov-notes" placeholder="Who/where this SIM is for">
+          </div>
+          <div class="row">
+            <label>Valid for (hours)</label>
+            <input id="prov-hours" type="number" value="24" min="1" max="720">
+          </div>
+          <div id="prov-error" class="error hidden"></div>
+          <button type="submit" class="primary">Generate</button>
+        </form>
+
+        <div id="prov-result" class="panel hidden">
+          <h3>Provision ready</h3>
+          <div class="prov-grid">
+            <div class="qr-holder"><img id="prov-qr" alt="QR code"></div>
+            <div class="prov-meta">
+              <p><strong>Number:</strong> <span id="prov-num"></span></p>
+              <p><strong>Expires:</strong> <span id="prov-expires"></span></p>
+              <label>Deep link / scan payload</label>
+              <textarea id="prov-url" readonly rows="3"></textarea>
+              <div class="row-inline">
+                <button id="prov-copy" class="ghost">Copy URL</button>
+                <button id="prov-close" class="ghost">Done</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3>Recent codes</h3>
+        <table>
+          <thead><tr>
+            <th>Number</th><th>Name</th><th>Status</th><th>Created</th><th>Expires</th><th></th>
+          </tr></thead>
+          <tbody id="prov-list"></tbody>
+        </table>
+      </section>
+
+      <!-- Account -->
+      <section id="page-account" class="hidden">
+        <h2>Account</h2>
+        <form id="password-form" class="panel">
+          <p id="must-change-banner" class="warn hidden">Default credentials in use — set a new password to continue.</p>
+          <label>Current password</label>
+          <input id="pw-old" type="password" autocomplete="current-password">
+          <label>New password</label>
+          <input id="pw-new" type="password" autocomplete="new-password">
+          <label>Confirm new password</label>
+          <input id="pw-confirm" type="password" autocomplete="new-password">
+          <div id="pw-error" class="error hidden"></div>
+          <div id="pw-ok" class="ok hidden"></div>
+          <button type="submit" class="primary">Change password</button>
+        </form>
+      </section>
+    </main>
+  </div>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -24,3 +24,6 @@ ocnserver/ocnserver
 # OS files
 .DS_Store
 Thumbs.db
+
+# TTS cache (root-level from stray runs)
+tts_cache/

@@ -42,6 +42,7 @@ type RegisterRequest struct {
 	KsimID             *KSimID              `json:"ksim_id"`
 	ChallengeResponse  *ChallengeResponse   `json:"challenge_response"`
 	DisplayName        *DisplayName         `json:"display_name"`
+	ActivationToken    string               `json:"activation_token,omitempty"`
 }
 
 type RegisterResponse struct {
