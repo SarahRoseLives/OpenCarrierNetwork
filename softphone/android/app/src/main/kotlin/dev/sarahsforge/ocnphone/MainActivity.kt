@@ -1,6 +1,8 @@
 package dev.sarahsforge.ocnphone
 
+import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.media.ToneGenerator
 import android.os.Handler
 import android.os.Looper
@@ -11,6 +13,10 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var toneGen: ToneGenerator? = null
+    private var ringbackPlayer: MediaPlayer? = null
+    private var previousAudioMode: Int = AudioManager.MODE_NORMAL
+    private var previousSpeakerphone: Boolean = false
+    private var ringbackActive = false
 
     private val dtmfTones = mapOf(
         "1" to ToneGenerator.TONE_DTMF_1,
@@ -35,6 +41,20 @@ class MainActivity : FlutterActivity() {
                     "tone" -> {
                         val key = call.argument<String>("key") ?: ""
                         playTone(key)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "ocn/ringback")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        startRingback()
+                        result.success(null)
+                    }
+                    "stop" -> {
+                        stopRingback()
                         result.success(null)
                     }
                     else -> result.notImplemented()
@@ -67,5 +87,59 @@ class MainActivity : FlutterActivity() {
             audioManager.mode = previousMode
             audioManager.isSpeakerphoneOn = previousSpeaker
         }, 160)
+    }
+
+    /** Starts a looping ringback tone through the earpiece. */
+    private fun startRingback() {
+        if (ringbackActive) return
+        val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        previousAudioMode = audioManager.mode
+        previousSpeakerphone = audioManager.isSpeakerphoneOn
+
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        audioManager.isSpeakerphoneOn = false
+
+        try {
+            val player = MediaPlayer()
+            player.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            player.setDataSource(applicationContext, android.net.Uri.parse("android.resource://" + packageName + "/" + R.raw.ring))
+            player.isLooping = true
+            player.prepare()
+            player.start()
+            ringbackPlayer = player
+            ringbackActive = true
+        } catch (e: Exception) {
+            stopRingback()
+        }
+    }
+
+    /** Stops the ringback tone and restores the previous audio state. */
+    private fun stopRingback() {
+        if (!ringbackActive) return
+        ringbackActive = false
+        try {
+            ringbackPlayer?.stop()
+        } catch (_: Exception) {
+            // ignore
+        }
+        try {
+            ringbackPlayer?.release()
+        } catch (_: Exception) {
+            // ignore
+        }
+        ringbackPlayer = null
+
+        try {
+            val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+            audioManager.mode = previousAudioMode
+            audioManager.isSpeakerphoneOn = previousSpeakerphone
+        } catch (_: Exception) {
+            // ignore
+        }
     }
 }

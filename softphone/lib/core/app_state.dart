@@ -5,6 +5,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../core/ksim/ksim.dart';
 import '../core/notifications/call_notifications.dart';
 import '../core/provision/ocn_ksim_uri.dart';
+import '../core/audio/ringback.dart';
 import '../core/signaling/signaling_client.dart';
 import '../core/webrtc/webrtc_manager.dart';
 
@@ -29,6 +30,7 @@ class CallSession {
   String? pendingOfferSdp;
   String? serviceCode;
   String? serviceName;
+  bool remoteDescriptionSet = false;
   final List<RTCIceCandidate> pendingLocalIce = [];
   final List<RTCIceCandidate> pendingRemoteIce = [];
 
@@ -292,6 +294,12 @@ class AppState extends ChangeNotifier {
         activeCall!.state = CallState.ringing;
         notifyListeners();
         _flushLocalIce();
+        // Caller hears a ringback tone in the earpiece until the other side
+        // picks up. (Service calls never reach ringing — they connect
+        // immediately.)
+        if (!activeCall!.isIncoming && !activeCall!.isService) {
+          Ringback.start();
+        }
       }
     };
 
@@ -305,12 +313,16 @@ class AppState extends ChangeNotifier {
         activeCall!.serviceName = serviceName;
         notifyListeners();
 
+        // Ringback ends the moment the call is picked up.
+        await Ringback.stop();
+
         if (sdpAnswer != null && activeCall?.peerConnection != null) {
           try {
             await _webrtc.setRemoteDescription(
               activeCall!.peerConnection!,
               RTCSessionDescription(sdpAnswer, 'answer'),
             );
+            activeCall!.remoteDescriptionSet = true;
             log('Remote description set from answer');
           } catch (e) {
             log('Failed to set remote description: $e');
@@ -331,12 +343,19 @@ class AppState extends ChangeNotifier {
     };
     _signaling.onICECandidate = (callId, candidate, sdpMid, sdpMLineIndex) {
       final ice = RTCIceCandidate(candidate, sdpMid, sdpMLineIndex);
-      if (activeCall != null && activeCall!.peerConnection != null) {
-        if (activeCall!.callId == callId || activeCall!.callId.isEmpty) {
-          _webrtc.addIceCandidate(activeCall!.peerConnection!, ice);
-        } else {
-          activeCall!.pendingRemoteIce.add(ice);
-        }
+      final call = activeCall;
+      if (call == null) return;
+      // Only accept candidates for the current call.
+      if (call.callId != callId && call.callId.isNotEmpty) return;
+      // A remote candidate can only be handed to the PeerConnection once the
+      // peer connection exists AND the remote description is set. Anything
+      // that arrives earlier (e.g. the caller's candidates while the callee is
+      // still showing the incoming-call screen) is buffered and flushed after
+      // the answer/remote-description is in place.
+      if (call.peerConnection != null && call.remoteDescriptionSet) {
+        _webrtc.addIceCandidate(call.peerConnection!, ice);
+      } else {
+        call.pendingRemoteIce.add(ice);
       }
     };
 
@@ -404,6 +423,10 @@ class AppState extends ChangeNotifier {
         }
       };
 
+      pc.onIceConnectionState = (state) {
+        log('AppState: ICE connection state: $state (${activeCall?.callId})'); debugPrint('ICE connection state: $state');
+      };
+
       final offer = await _webrtc.createOffer(pc);
       _signaling.call(destination, offer.sdp!);
     } catch (e) {
@@ -456,11 +479,19 @@ class AppState extends ChangeNotifier {
         }
       };
 
+      pc.onIceConnectionState = (state) {
+        log('AppState: ICE connection state: $state (${activeCall?.callId})'); debugPrint('ICE connection state: $state');
+      };
+
       if (activeCall!.pendingOfferSdp != null) {
         await _webrtc.setRemoteDescription(
           pc,
           RTCSessionDescription(activeCall!.pendingOfferSdp!, 'offer'),
         );
+        activeCall!.remoteDescriptionSet = true;
+        // Now that the remote description exists we can add the caller's ICE
+        // candidates that arrived while we were ringing.
+        _flushRemoteIce();
       }
 
       final answer = await _webrtc.createAnswer(pc);
@@ -514,6 +545,7 @@ class AppState extends ChangeNotifier {
   void _cleanupCall() {
     final call = activeCall;
     _stopRinger();
+    Ringback.stop();
     if (call != null) {
       CallNotifications.cancelIncomingCall(call.callId);
     }
@@ -539,6 +571,7 @@ class AppState extends ChangeNotifier {
 
   void _flushRemoteIce() {
     if (activeCall == null || activeCall!.peerConnection == null) return;
+    if (!activeCall!.remoteDescriptionSet) return;
     for (final ice in activeCall!.pendingRemoteIce) {
       _webrtc.addIceCandidate(activeCall!.peerConnection!, ice);
     }
