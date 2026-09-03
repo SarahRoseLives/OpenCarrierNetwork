@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "286519290",
+    "project_id": "ocnphone-9ac9d",
+    "storage_bucket": "ocnphone-9ac9d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:286519290:android:d66c37dd6d68619a21be43",
+        "android_client_info": {
+          "package_name": "dev.sarahsforge.ocnphone"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAWiXD5vP_KjvrLqXTPOqlwObze_BvOCxM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

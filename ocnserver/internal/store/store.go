@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -14,6 +15,7 @@ type User struct {
 	AreaCode      string
 	Number        string  // 7-digit local number
 	DisplayName   string
+	FCMToken      string
 	RegisteredAt  time.Time
 	LastSeen      time.Time
 }
@@ -47,6 +49,7 @@ func (s *Store) migrate() error {
 			area_code TEXT NOT NULL,
 			number TEXT NOT NULL UNIQUE,
 			display_name TEXT NOT NULL DEFAULT '',
+			fcm_token TEXT NOT NULL DEFAULT '',
 			registered_at INTEGER NOT NULL,
 			last_seen INTEGER NOT NULL
 		)`,
@@ -63,11 +66,16 @@ func (s *Store) migrate() error {
 			created_at INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_voicemail_recipient ON voicemail(recipient_number)`,
+		// Add fcm_token to pre-existing users tables (created before the column existed)
+		`ALTER TABLE users ADD COLUMN fcm_token TEXT NOT NULL DEFAULT ''`,
 	}
 
 	for _, m := range migrations {
 		if _, err := s.db.Exec(m); err != nil {
-			return fmt.Errorf("migration: %w", err)
+			// Ignore duplicate column errors from ALTER TABLE on already-migrated DBs
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("migration: %w", err)
+			}
 		}
 	}
 
@@ -77,9 +85,9 @@ func (s *Store) migrate() error {
 // CreateUser registers a new user with a phone number
 func (s *Store) CreateUser(u *User) error {
 	_, err := s.db.Exec(
-		`INSERT INTO users (ksim_public_key, area_code, number, display_name, registered_at, last_seen)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		u.KSimPublicKey, u.AreaCode, u.Number, u.DisplayName,
+		`INSERT INTO users (ksim_public_key, area_code, number, display_name, fcm_token, registered_at, last_seen)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		u.KSimPublicKey, u.AreaCode, u.Number, u.DisplayName, u.FCMToken,
 		u.RegisteredAt.Unix(), u.LastSeen.Unix(),
 	)
 	return err
@@ -92,9 +100,9 @@ func (s *Store) GetUserByPublicKey(pubKey ed25519.PublicKey) (*User, error) {
 	var regAt, lastSeen int64
 
 	err := s.db.QueryRow(
-		`SELECT ksim_public_key, area_code, number, display_name, registered_at, last_seen
+		`SELECT ksim_public_key, area_code, number, display_name, fcm_token, registered_at, last_seen
 		 FROM users WHERE ksim_public_key = ?`, pubKey,
-	).Scan(&pubKeyBytes, &u.AreaCode, &u.Number, &u.DisplayName, &regAt, &lastSeen)
+	).Scan(&pubKeyBytes, &u.AreaCode, &u.Number, &u.DisplayName, &u.FCMToken, &regAt, &lastSeen)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -116,9 +124,9 @@ func (s *Store) GetUserByNumber(number string) (*User, error) {
 	var regAt, lastSeen int64
 
 	err := s.db.QueryRow(
-		`SELECT ksim_public_key, area_code, number, display_name, registered_at, last_seen
+		`SELECT ksim_public_key, area_code, number, display_name, fcm_token, registered_at, last_seen
 		 FROM users WHERE number = ?`, number,
-	).Scan(&pubKeyBytes, &u.AreaCode, &u.Number, &u.DisplayName, &regAt, &lastSeen)
+	).Scan(&pubKeyBytes, &u.AreaCode, &u.Number, &u.DisplayName, &u.FCMToken, &regAt, &lastSeen)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -131,6 +139,15 @@ func (s *Store) GetUserByNumber(number string) (*User, error) {
 	u.RegisteredAt = time.Unix(regAt, 0)
 	u.LastSeen = time.Unix(lastSeen, 0)
 	return &u, nil
+}
+
+// UpdateFCMToken updates the user's FCM push notification token
+func (s *Store) UpdateFCMToken(pubKey ed25519.PublicKey, token string) error {
+	_, err := s.db.Exec(
+		`UPDATE users SET fcm_token = ? WHERE ksim_public_key = ?`,
+		token, pubKey,
+	)
+	return err
 }
 
 // UpdateLastSeen updates the user's last seen timestamp

@@ -6,42 +6,73 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
 class UserDatabase {
-  static String? _dbPath;
   static Map<String, dynamic>? _cache;
 
   static Future<String> get _filePath async {
-    if (_dbPath != null) return _dbPath!;
-    final dir = await getApplicationSupportDirectory();
-    _dbPath = p.join(dir.path, 'ocn_user.json');
-    log('Database path: $_dbPath');
-    return _dbPath!;
+    String dirPath;
+
+    try {
+      final dir = await getApplicationSupportDirectory();
+      dirPath = dir.path;
+    } catch (e) {
+      log('getApplicationSupportDirectory failed: $e');
+      // Fallback
+      if (Platform.isAndroid) {
+        dirPath = '/data/data/dev.sarahsforge.ocnphone/files';
+      } else {
+        final home = Platform.environment['HOME'] ?? '/tmp';
+        dirPath = p.join(home, '.ocnphone');
+      }
+    }
+
+    // Ensure directory exists
+    final dir = Directory(dirPath);
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+
+    return p.join(dirPath, 'ocn_user.json');
   }
 
   static Future<Map<String, dynamic>> _load() async {
     if (_cache != null) return _cache!;
-    final path = await _filePath;
-    final file = File(path);
-    log('Loading from: $path (exists: ${await file.exists()})');
-    if (await file.exists()) {
-      try {
+
+    try {
+      final path = await _filePath;
+      final file = File(path);
+
+      if (await file.exists()) {
         final data = await file.readAsString();
-        _cache = jsonDecode(data) as Map<String, dynamic>;
-        log('Loaded user data: ${_cache!.keys.join(', ')}');
-      } catch (e) {
-        log('Error loading user data: $e');
-        _cache = {};
+        if (data.isNotEmpty) {
+          _cache = jsonDecode(data) as Map<String, dynamic>;
+          return _cache!;
+        }
       }
-    } else {
-      _cache = {};
+    } catch (e) {
+      log('UserDatabase._load error: $e');
     }
+
+    _cache = {};
     return _cache!;
   }
 
   static Future<void> _save() async {
-    final path = await _filePath;
-    final file = File(path);
-    await file.writeAsString(jsonEncode(_cache));
-    log('Saved user data to: $path');
+    try {
+      final path = await _filePath;
+      final file = File(path);
+
+      // Ensure parent directory exists
+      final dir = file.parent;
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+
+      await file.writeAsString(jsonEncode(_cache));
+      log('Saved to: $path');
+    } catch (e) {
+      log('UserDatabase._save error: $e');
+      rethrow;
+    }
   }
 
   static Future<void> saveUser({
@@ -62,17 +93,14 @@ class UserDatabase {
       'registered_at': DateTime.now().toIso8601String(),
     };
     await _save();
-    log('User saved: $phoneNumber ($displayName)');
   }
 
   static Future<StoredUser?> loadUser() async {
     final data = await _load();
     if (data.isEmpty || !data.containsKey('public_key')) {
-      log('No user data found');
       return null;
     }
 
-    log('Loading user: ${data['phone_number']} (${data['display_name']})');
     return StoredUser(
       publicKey: base64Decode(data['public_key'] as String),
       encryptedSeed: base64Decode(data['encrypted_seed'] as String),
@@ -99,20 +127,20 @@ class UserDatabase {
 
   static Future<void> deleteUser() async {
     _cache = {};
-    _dbPath = null;
-    final path = await _filePath;
-    final file = File(path);
-    if (await file.exists()) {
-      await file.delete();
-      log('Deleted user data');
+    try {
+      final path = await _filePath;
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (e) {
+      log('UserDatabase.deleteUser error: $e');
     }
   }
 
   static Future<bool> hasUser() async {
     final data = await _load();
-    final exists = data.isNotEmpty && data.containsKey('public_key');
-    log('hasUser: $exists');
-    return exists;
+    return data.isNotEmpty && data.containsKey('public_key');
   }
 }
 

@@ -8,6 +8,7 @@ import (
 type ClientMessage struct {
 	ChallengeRequest *ChallengeRequest    `json:"challenge_request,omitempty"`
 	Register         *RegisterRequest     `json:"register,omitempty"`
+	RegisterFCM      *RegisterFCM         `json:"register_fcm,omitempty"`
 	Call             *CallRequest         `json:"call,omitempty"`
 	CallAnswer       *CallAnswer          `json:"call_answer,omitempty"`
 	CallHangup       *CallHangup          `json:"call_hangup,omitempty"`
@@ -47,6 +48,10 @@ type RegisterResponse struct {
 	Success        bool         `json:"success"`
 	AssignedNumber *PhoneNumber `json:"assigned_number,omitempty"`
 	ErrorMessage   string       `json:"error_message,omitempty"`
+}
+
+type RegisterFCM struct {
+	Token string `json:"token"`
 }
 
 type CallRequest struct {

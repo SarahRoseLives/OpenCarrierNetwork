@@ -68,6 +68,32 @@ class _DialerScreenState extends State<DialerScreen> {
       ),
       body: Column(
         children: [
+          // Reconnecting banner
+          if (appState.isReconnecting)
+            Container(
+              width: double.infinity,
+              color: Colors.orange,
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Text(
+                    'Reconnecting to server...',
+                    style: TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+
           // Number display
           Container(
             padding: const EdgeInsets.all(24),
@@ -93,8 +119,8 @@ class _DialerScreenState extends State<DialerScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 FloatingActionButton(
-                  onPressed: _dialNumber.isNotEmpty ? _onCall : null,
-                  backgroundColor: Colors.green,
+                  onPressed: _dialNumber.isNotEmpty && !appState.isReconnecting ? _onCall : null,
+                  backgroundColor: appState.isReconnecting ? Colors.grey : Colors.green,
                   child: const Icon(Icons.call, color: Colors.white),
                 ),
                 if (_dialNumber.isNotEmpty) ...[

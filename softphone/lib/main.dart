@@ -1,21 +1,59 @@
+import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'core/app_state.dart';
+import 'core/fcm/fcm_service.dart';
 import 'features/dialer/dialer_screen.dart';
 import 'features/call/call_screen.dart';
 import 'features/registration/registration_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const OcnSoftphoneApp());
 }
 
-class OcnSoftphoneApp extends StatelessWidget {
+class OcnSoftphoneApp extends StatefulWidget {
   const OcnSoftphoneApp({super.key});
 
   @override
+  State<OcnSoftphoneApp> createState() => _OcnSoftphoneAppState();
+}
+
+class _OcnSoftphoneAppState extends State<OcnSoftphoneApp> {
+  late final AppState _appState;
+
+  @override
+  void initState() {
+    super.initState();
+    _appState = AppState(serverUrl: 'ws://192.168.1.240:9100/ws');
+    _appState.initialize();
+    _initFCM();
+  }
+
+  Future<void> _initFCM() async {
+    final token = await FCMService.init(
+      onCall: (callId, callerNumber, callerName) {
+        log('FCM: incoming call notification — reconnecting if needed');
+        // FCM woke us up for a call — ensure we're connected
+        // The server will deliver the call via WebSocket once we register
+      },
+    );
+    if (token != null) {
+      _appState.setFCMToken(token);
+    }
+  }
+
+  @override
+  void dispose() {
+    FCMService.dispose();
+    _appState.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => AppState(serverUrl: 'ws://192.168.1.240:9100/ws')..initialize(),
+    return ChangeNotifierProvider.value(
+      value: _appState,
       child: MaterialApp(
         title: 'OCN Phone',
         debugShowCheckedModeBanner: false,
@@ -59,6 +97,7 @@ class AppNavigator extends StatelessWidget {
           ),
         );
       case AppStatus.connected:
+      case AppStatus.reconnecting:
         return const MainApp();
       case AppStatus.error:
         return const RegistrationScreen();

@@ -10,6 +10,7 @@ enum AppStatus {
   needsRegistration,
   connecting,
   connected,
+  reconnecting,
   error,
 }
 
@@ -53,6 +54,7 @@ class AppState extends ChangeNotifier {
   OcnPhoneNumber? phoneNumber;
   String displayName = '';
   String? errorMessage;
+  String? _fcmToken;
 
   CallSession? activeCall;
   bool isMuted = false;
@@ -63,6 +65,7 @@ class AppState extends ChangeNotifier {
 
   String get serverUrl => _signaling.serverUrl;
   bool get isLoggedIn => keypair != null;
+  bool get isReconnecting => status == AppStatus.reconnecting;
 
   AppState({required String serverUrl})
     : _signaling = SignalingClient(serverUrl: serverUrl);
@@ -113,6 +116,7 @@ class AppState extends ChangeNotifier {
     keypair = await KSimKeypair.generate();
 
     _signaling.serverUrl = serverUrl;
+    _signaling.setCredentials(keypair!, name);
     _setupSignalingCallbacks();
     _signaling.connect();
 
@@ -122,6 +126,7 @@ class AppState extends ChangeNotifier {
 
   void _connectToServer(String serverUrl) {
     _signaling.serverUrl = serverUrl;
+    _signaling.setCredentials(keypair!, displayName);
     _setupSignalingCallbacks();
     _signaling.connect();
 
@@ -130,7 +135,16 @@ class AppState extends ChangeNotifier {
     });
   }
 
+  /// Set FCM token and register with server
+  void setFCMToken(String token) {
+    _fcmToken = token;
+    if (_signaling.isConnected) {
+      _signaling.registerFCM(token);
+    }
+  }
+
   Future<void> logout() async {
+    _fcmToken = null;
     _signaling.disconnect();
     _cleanupCall();
     await KSimStorage.deleteAll();
@@ -142,10 +156,24 @@ class AppState extends ChangeNotifier {
   }
 
   void _setupSignalingCallbacks() {
+    _signaling.onConnectionState = (state) {
+      if (state == OcnConnectionState.reconnecting) {
+        status = AppStatus.reconnecting;
+        notifyListeners();
+      } else if (state == OcnConnectionState.connected && status == AppStatus.reconnecting) {
+        // Reconnected — status will be set to connected by onRegistered
+      }
+    };
+
     _signaling.onRegistered = (number) async {
       phoneNumber = number;
       status = AppStatus.connected;
       notifyListeners();
+
+      // Re-register FCM token after reconnect
+      if (_fcmToken != null) {
+        _signaling.registerFCM(_fcmToken!);
+      }
 
       // Save to database
       if (keypair != null) {

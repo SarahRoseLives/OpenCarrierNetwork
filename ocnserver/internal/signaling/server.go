@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/open-carrier-network/ocn/internal/auth"
+	"github.com/open-carrier-network/ocn/internal/fcm"
 	"github.com/open-carrier-network/ocn/internal/numbers"
 	"github.com/open-carrier-network/ocn/internal/services"
 	"github.com/open-carrier-network/ocn/internal/store"
@@ -36,6 +37,7 @@ type Server struct {
 	clients    map[string]*Client // key: phone number
 	services   *services.Registry
 	svcCalls   map[string]*serviceCall // key: callID
+	fcmClient  *fcm.Client
 	mu         sync.RWMutex
 }
 
@@ -44,7 +46,7 @@ type serviceCall struct {
 	service services.Service
 }
 
-func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, areaCode string, reg *services.Registry) *Server {
+func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, areaCode string, reg *services.Registry, fcmClient *fcm.Client) *Server {
 	return &Server{
 		store:     s,
 		auth:      a,
@@ -53,6 +55,7 @@ func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, ar
 		clients:   make(map[string]*Client),
 		services:  reg,
 		svcCalls:  make(map[string]*serviceCall),
+		fcmClient: fcmClient,
 	}
 }
 
@@ -116,6 +119,8 @@ func (srv *Server) handleMessage(client *Client, msg *ClientMessage) {
 	case msg.Register != nil:
 		log.Printf("Received register")
 		srv.handleRegister(client, msg.Register)
+	case msg.RegisterFCM != nil:
+		srv.handleRegisterFCM(client, msg.RegisterFCM)
 	case msg.Call != nil:
 		log.Printf("Received call to %s", msg.Call.Destination)
 		srv.handleCall(client, msg.Call)
@@ -223,6 +228,16 @@ func (srv *Server) handleRegister(client *Client, msg *RegisterRequest) {
 	log.Printf("User registered: %s (%s)", numbers.FormatNumber(user.AreaCode, user.Number), user.DisplayName)
 }
 
+func (srv *Server) handleRegisterFCM(client *Client, msg *RegisterFCM) {
+	if client.user == nil {
+		return
+	}
+	log.Printf("FCM token registered for %s", client.user.Number)
+	if err := srv.store.UpdateFCMToken(client.user.KSimPublicKey, msg.Token); err != nil {
+		log.Printf("Failed to update FCM token: %v", err)
+	}
+}
+
 func (srv *Server) handleCall(client *Client, msg *CallRequest) {
 	if client.user == nil {
 		srv.sendError(client, 401, "not registered")
@@ -259,7 +274,35 @@ func (srv *Server) handleCall(client *Client, msg *CallRequest) {
 	log.Printf("Callee %s online: %v", localNum, online)
 
 	if !online {
-		srv.sendError(client, 404, "user not online")
+		// Try FCM push notification
+		callee, err := srv.store.GetUserByNumber(localNum)
+		if err != nil || callee == nil || callee.FCMToken == "" {
+			srv.sendError(client, 404, "user not online")
+			return
+		}
+
+		callID := generateCallID()
+		callerName := client.user.DisplayName
+		if callerName == "" {
+			callerName = client.user.Number
+		}
+
+		if srv.fcmClient != nil {
+			if err := srv.fcmClient.SendCallNotification(
+				callee.FCMToken, callID, client.user.Number, callerName,
+			); err != nil {
+				log.Printf("FCM push failed: %v", err)
+				srv.sendError(client, 404, "user not online")
+				return
+			}
+			log.Printf("FCM push sent for call %s to %s", callID, localNum)
+			// Tell caller we're trying
+			srv.sendMessage(client, &ServerMessage{
+				CallRinging: &CallRinging{CallID: callID},
+			})
+		} else {
+			srv.sendError(client, 404, "user not online")
+		}
 		return
 	}
 

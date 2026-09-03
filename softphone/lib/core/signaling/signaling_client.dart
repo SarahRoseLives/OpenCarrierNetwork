@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer';
+import 'dart:developer' as dev;
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../ksim/ksim_keypair.dart';
@@ -32,6 +33,8 @@ class OcnPhoneNumber {
   );
 }
 
+enum OcnConnectionState { disconnected, connecting, connected, reconnecting }
+
 class SignalingClient {
   WebSocketChannel? _channel;
   String serverUrl;
@@ -44,6 +47,16 @@ class SignalingClient {
   Function(String callId, String reason)? onCallEnded;
   Function(String callId, String candidate, String sdpMid, int sdpMLineIndex)? onICECandidate;
   Function(int code, String message)? onError;
+  Function(OcnConnectionState state)? onConnectionState;
+
+  // Internal state for reconnection
+  OcnConnectionState _state = OcnConnectionState.disconnected;
+  KSimKeypair? _keypair;
+  String _displayName = '';
+  Timer? _reconnectTimer;
+  int _reconnectAttempt = 0;
+  static const _maxBackoff = 30;
+  bool _intentionalDisconnect = false;
 
   // Pending registration state
   KSimKeypair? _pendingKeypair;
@@ -52,32 +65,112 @@ class SignalingClient {
 
   SignalingClient({required this.serverUrl});
 
+  OcnConnectionState get connectionState => _state;
+  bool get isConnected => _state == OcnConnectionState.connected;
+
   void connect() {
-    _channel = WebSocketChannel.connect(Uri.parse(serverUrl));
-    _channel!.stream.listen(
-      (data) {
-        final json = jsonDecode(data as String) as Map<String, dynamic>;
-        _handleMessage(json);
-      },
-      onError: (error) {
-        onError?.call(0, 'WebSocket error: $error');
-        _challengeCompleter?.completeError(error);
-      },
-      onDone: () {
-        onError?.call(0, 'WebSocket closed');
-        _challengeCompleter?.completeError('WebSocket closed');
-      },
-    );
+    if (_state == OcnConnectionState.connecting || _state == OcnConnectionState.connected) {
+      return;
+    }
+    _intentionalDisconnect = false;
+    _setState(OcnConnectionState.connecting);
+    _doConnect();
+  }
+
+  void _doConnect() {
+    try {
+      _channel = WebSocketChannel.connect(Uri.parse(serverUrl));
+
+      // Listen for connection to be ready, then re-register if reconnecting
+      _channel!.ready.then((_) {
+        dev.log('WebSocket connected');
+        if (_state == OcnConnectionState.reconnecting && _keypair != null) {
+          _reRegister();
+        }
+      }).catchError((e) {
+        dev.log('WebSocket ready error: $e');
+        _onDisconnected();
+      });
+
+      _channel!.stream.listen(
+        (data) {
+          final json = jsonDecode(data as String) as Map<String, dynamic>;
+          _handleMessage(json);
+        },
+        onError: (error) {
+          dev.log('WebSocket error: $error');
+          _onDisconnected();
+        },
+        onDone: () {
+          dev.log('WebSocket closed');
+          _onDisconnected();
+        },
+      );
+    } catch (e) {
+      dev.log('WebSocket connect failed: $e');
+      _onDisconnected();
+    }
+  }
+
+  void _onDisconnected() {
+    if (_intentionalDisconnect) {
+      _setState(OcnConnectionState.disconnected);
+      return;
+    }
+
+    if (_state == OcnConnectionState.connected || _state == OcnConnectionState.connecting) {
+      _setState(OcnConnectionState.reconnecting);
+      _scheduleReconnect();
+    } else if (_state == OcnConnectionState.reconnecting) {
+      _scheduleReconnect();
+    }
+  }
+
+  void _scheduleReconnect() {
+    _reconnectTimer?.cancel();
+    final delay = _backoffDelay();
+    dev.log('Reconnecting in ${delay}s (attempt $_reconnectAttempt)');
+    _reconnectTimer = Timer(Duration(seconds: delay), () {
+      _doConnect();
+    });
+  }
+
+  int _backoffDelay() {
+    final delay = min(pow(2, _reconnectAttempt).toInt(), _maxBackoff);
+    _reconnectAttempt++;
+    return delay;
+  }
+
+  void _resetBackoff() {
+    _reconnectAttempt = 0;
+  }
+
+  void _setState(OcnConnectionState newState) {
+    if (_state != newState) {
+      _state = newState;
+      dev.log('Connection state: $newState');
+      onConnectionState?.call(newState);
+    }
+  }
+
+  /// Store credentials for automatic re-registration after reconnect
+  void setCredentials(KSimKeypair keypair, String displayName) {
+    _keypair = keypair;
+    _displayName = displayName;
   }
 
   void disconnect() {
+    _intentionalDisconnect = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     _channel?.sink.close();
     _channel = null;
+    _setState(OcnConnectionState.disconnected);
     _challengeCompleter?.completeError('Disconnected');
   }
 
   void _handleMessage(Map<String, dynamic> json) {
-    log('Received: ${json.keys.join(", ")}');
+    dev.log('Received: ${json.keys.join(", ")}');
 
     if (json.containsKey('challenge_response')) {
       _handleChallengeResponse(json['challenge_response'] as Map<String, dynamic>);
@@ -85,7 +178,7 @@ class SignalingClient {
       _handleRegisterResponse(json['register_response'] as Map<String, dynamic>);
     } else if (json.containsKey('incoming_call')) {
       final call = json['incoming_call'] as Map<String, dynamic>;
-      log('Incoming call: ${call['call_id']} from ${call['caller_number']}');
+      dev.log('Incoming call: ${call['call_id']} from ${call['caller_number']}');
       final callerNum = OcnPhoneNumber.fromJson(call['caller_number'] as Map<String, dynamic>);
       final callerName = (call['caller_name'] as Map<String, dynamic>?)?['name'] as String? ?? '';
       final offer = call['offer'] as Map<String, dynamic>;
@@ -121,7 +214,7 @@ class SignalingClient {
       );
     } else if (json.containsKey('error')) {
       final err = json['error'] as Map<String, dynamic>;
-      log('Error from server: ${err['code']} ${err['message']}');
+      dev.log('Error from server: ${err['code']} ${err['message']}');
       onError?.call(err['code'] as int, err['message'] as String);
       _challengeCompleter?.completeError(err['message'] as String);
     }
@@ -135,7 +228,6 @@ class SignalingClient {
     final nonce = base64Decode(json['nonce'] as String);
     final timestamp = json['timestamp'] as int;
 
-    // Sign the challenge and complete
     _pendingKeypair!.signChallenge(Uint8List.fromList(nonce), timestamp).then((signature) {
       _send({
         'register': {
@@ -159,6 +251,8 @@ class SignalingClient {
   void _handleRegisterResponse(Map<String, dynamic> json) {
     if (json['success'] == true && json['assigned_number'] != null) {
       final num = OcnPhoneNumber.fromJson(json['assigned_number'] as Map<String, dynamic>);
+      _setState(OcnConnectionState.connected);
+      _resetBackoff();
       onRegistered?.call(num);
     } else {
       onError?.call(400, json['error_message'] as String? ?? 'Registration failed');
@@ -171,7 +265,6 @@ class SignalingClient {
     _pendingDisplayName = displayName;
     _challengeCompleter = Completer<void>();
 
-    // Step 1: Request challenge
     _send({
       'challenge_request': {
         'ksim_id': {
@@ -180,13 +273,23 @@ class SignalingClient {
       },
     });
 
-    // Step 2: Wait for challenge response to be handled
-    // The _handleChallengeResponse method will sign and send the registration
     await _challengeCompleter!.future;
   }
 
+  /// Re-register after reconnection using stored credentials
+  Future<void> _reRegister() async {
+    if (_keypair == null) return;
+    dev.log('Re-registering after reconnect...');
+    try {
+      await register(_keypair!, _displayName);
+      dev.log('Re-registration successful');
+    } catch (e) {
+      dev.log('Re-registration failed: $e');
+    }
+  }
+
   void call(String destination, String sdp) {
-    log('Calling $destination');
+    dev.log('Calling $destination');
     _send({
       'call': {
         'destination': destination,
@@ -231,11 +334,27 @@ class SignalingClient {
     });
   }
 
+  void registerFCM(String token) {
+    _send({
+      'register_fcm': {
+        'token': token,
+      },
+    });
+  }
+
   void ping() {
     _send({'ping': {}});
   }
 
   void _send(Map<String, dynamic> message) {
-    _channel?.sink.add(jsonEncode(message));
+    if (_state != OcnConnectionState.connected && _state != OcnConnectionState.connecting) {
+      dev.log('Cannot send: not connected');
+      return;
+    }
+    try {
+      _channel?.sink.add(jsonEncode(message));
+    } catch (e) {
+      dev.log('Send error: $e');
+    }
   }
 }

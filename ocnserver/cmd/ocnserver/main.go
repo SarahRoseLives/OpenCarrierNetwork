@@ -11,6 +11,7 @@ import (
 
 	"github.com/open-carrier-network/ocn/config"
 	"github.com/open-carrier-network/ocn/internal/auth"
+	"github.com/open-carrier-network/ocn/internal/fcm"
 	"github.com/open-carrier-network/ocn/internal/ksim"
 	"github.com/open-carrier-network/ocn/internal/numbers"
 	"github.com/open-carrier-network/ocn/internal/services"
@@ -20,6 +21,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.json", "path to config file")
+	fcmCreds := flag.String("fcm-creds", "", "path to Firebase service account JSON")
 	flag.Parse()
 
 	// Load config
@@ -50,8 +52,19 @@ func main() {
 	}
 	serviceRegistry.Register(echoService)
 
+	// Initialize FCM client (optional)
+	var fcmClient *fcm.Client
+	if *fcmCreds != "" {
+		fcmClient, err = fcm.NewClient(*fcmCreds)
+		if err != nil {
+			log.Printf("WARNING: FCM client failed to initialize: %v", err)
+		}
+	} else {
+		log.Printf("FCM not configured (use --fcm-creds to enable push notifications)")
+	}
+
 	// Initialize signaling server
-	sigServer := signaling.NewServer(db, authMgr, allocator, cfg.AreaCode, serviceRegistry)
+	sigServer := signaling.NewServer(db, authMgr, allocator, cfg.AreaCode, serviceRegistry, fcmClient)
 
 	// Load or generate server keypair
 	if _, err := os.Stat(cfg.ServerKeyPath); os.IsNotExist(err) {
@@ -95,6 +108,9 @@ func main() {
 	log.Printf("  Health:    http://%s/health", addr)
 	log.Printf("  Info:      http://%s/info", addr)
 	log.Printf("  Services:  *01 Echo Test")
+	if fcmClient != nil {
+		log.Printf("  FCM:       enabled")
+	}
 
 	// Graceful shutdown
 	go func() {
