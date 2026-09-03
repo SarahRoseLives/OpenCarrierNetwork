@@ -8,6 +8,8 @@ import '../core/provision/ocn_ksim_uri.dart';
 import '../core/audio/ringback.dart';
 import '../core/signaling/signaling_client.dart';
 import '../core/webrtc/webrtc_manager.dart';
+import 'db/db.dart';
+import 'phone/number_format.dart';
 
 enum AppStatus {
   uninitialized,
@@ -33,6 +35,11 @@ class CallSession {
   bool remoteDescriptionSet = false;
   final List<RTCIceCandidate> pendingLocalIce = [];
   final List<RTCIceCandidate> pendingRemoteIce = [];
+
+  /// Id of the in-flight [CallLogEntry] for this call, once recorded.
+  String? logId;
+  DateTime? connectedAt;
+  bool logFinalized = false;
 
   CallSession({
     required this.callId,
@@ -60,6 +67,11 @@ class AppState extends ChangeNotifier {
   bool isSpeaker = false;
   AudioPlayer? _ringer;
 
+  final ContactStore _contacts = ContactStore();
+  final CallHistoryStore _history = CallHistoryStore();
+  bool _phoneDataLoaded = false;
+  static int _idCounter = 0;
+
   final SignalingClient _signaling;
   final WebRTCManager _webrtc = WebRTCManager();
 
@@ -84,6 +96,151 @@ class AppState extends ChangeNotifier {
   String get serverUrl => _signaling.serverUrl;
   bool get isLoggedIn => keypair != null;
   bool get isReconnecting => status == AppStatus.reconnecting;
+
+  // ---- Persistent phonebook (contacts + call history) ----
+
+  String? get _ownArea => phoneNumber?.areaCode;
+  List<Contact> get contacts => _contacts.items;
+  List<CallLogEntry> get callHistory => _history.items;
+
+  /// Contact matching [numberText] (dialed or caller number), or null.
+  Contact? contactForNumber(String numberText) {
+    final canon = canonicalNumber(numberText, ownArea: _ownArea);
+    if (canon.isEmpty) return null;
+    return _contacts.byNumber(canon);
+  }
+
+  Future<void> _ensurePhoneData() async {
+    if (_phoneDataLoaded) return;
+    _phoneDataLoaded = true;
+    await _contacts.ensureLoaded();
+    await _history.ensureLoaded();
+    log('AppState: phonebook loaded '
+        '(${contacts.length} contacts, ${callHistory.length} calls)');
+    notifyListeners();
+  }
+
+  String _newId() {
+    _idCounter++;
+    return '${DateTime.now().microsecondsSinceEpoch}-$_idCounter';
+  }
+
+  Future<void> addContact({required String name, required String number}) async {
+    await _ensurePhoneData();
+    final contact = Contact(
+      id: _newId(),
+      name: name.trim(),
+      number: canonicalNumber(number, ownArea: _ownArea),
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    if (contact.name.isEmpty || contact.number.isEmpty) return;
+    await _contacts.add(contact);
+    notifyListeners();
+  }
+
+  Future<void> updateContact(
+    Contact contact, {
+    required String name,
+    required String number,
+  }) async {
+    await _ensurePhoneData();
+    final updated = contact.copyWith(
+      name: name.trim(),
+      number: canonicalNumber(number, ownArea: _ownArea),
+    );
+    if (updated.name.isEmpty || updated.number.isEmpty) return;
+    await _contacts.update(updated);
+    notifyListeners();
+  }
+
+  Future<void> deleteContact(String id) async {
+    await _ensurePhoneData();
+    await _contacts.remove(id);
+    notifyListeners();
+  }
+
+  Future<void> clearCallHistory() async {
+    await _ensurePhoneData();
+    await _history.clear();
+    notifyListeners();
+  }
+
+  Future<void> deleteHistoryEntry(String id) async {
+    await _ensurePhoneData();
+    await _history.remove(id);
+    notifyListeners();
+  }
+
+  void _startOutgoingLog(String destination) {
+    final id = _newId();
+    activeCall?.logId = id;
+    _history.add(
+      CallLogEntry(
+        id: id,
+        type: CallType.outgoing,
+        number: canonicalNumber(destination, ownArea: _ownArea),
+        startedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  void _startIncomingLog(OcnPhoneNumber caller, String callerName) {
+    activeCall?.logId = _newId();
+    _history.add(
+      CallLogEntry(
+        id: activeCall!.logId!,
+        type: CallType.incoming,
+        number: canonicalNumber(caller.full, ownArea: _ownArea),
+        nameSnapshot: callerName.isEmpty ? null : callerName,
+        startedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  void _markConnected() {
+    final call = activeCall;
+    if (call == null || call.connectedAt != null) return;
+    call.connectedAt = DateTime.now();
+    final id = call.logId;
+    if (id != null) {
+      _history.update(id, (e) => e.connectedAt = call.connectedAt);
+    }
+  }
+
+  /// Resolves an in-flight call into its final history entry. Call only once
+  /// (per call) from call teardown.
+  void _finalizeCallLog(CallSession call, {bool declined = false}) {
+    final id = call.logId;
+    if (id == null || call.logFinalized) return;
+    call.logFinalized = true;
+
+    final now = DateTime.now();
+    final answered = call.connectedAt != null;
+    final CallType type;
+    if (call.isIncoming) {
+      if (declined) {
+        type = CallType.rejected;
+      } else if (!answered) {
+        type = CallType.missed;
+      } else {
+        type = CallType.incoming;
+      }
+    } else {
+      type = CallType.outgoing;
+    }
+
+    _history.update(id, (e) {
+      e.type = type;
+      e.endedAt = now;
+      e.durationSec = answered
+          ? now.difference(call.connectedAt!).inSeconds
+          : 0;
+      if (call.serviceCode != null) e.serviceCode = call.serviceCode;
+      if (call.serviceName != null) e.serviceName = call.serviceName;
+    });
+  }
+
+  // ---- End phonebook ----
 
   /// The provisioning link currently being used. Populated by deep links,
   /// QR scans, and pasted links, and kept while the registration screen is up
@@ -128,6 +285,7 @@ class AppState extends ChangeNotifier {
           number: stored.phoneNumber,
         );
         log('kSIM loaded: ${stored.phoneNumber} (${stored.displayName})');
+        await _ensurePhoneData();
         _connectToServer(stored.serverUrl);
       } else {
         log('kSIM load returned null');
@@ -157,6 +315,7 @@ class AppState extends ChangeNotifier {
     _setupSignalingCallbacks();
     _signaling.connect();
 
+    await _ensurePhoneData();
     await Future.delayed(const Duration(milliseconds: 500));
     await _signaling.register(keypair!, name, activationToken: activationToken);
   }
@@ -274,6 +433,7 @@ class AppState extends ChangeNotifier {
           serverUrl: _signaling.serverUrl,
           phoneNumber: number.number,
           passphrase: '',
+          areaCode: number.areaCode,
         );
         log('kSIM saved to database');
       }
@@ -294,6 +454,7 @@ class AppState extends ChangeNotifier {
         state: CallState.ringing,
       );
       activeCall!.pendingOfferSdp = sdp;
+      _startIncomingLog(caller, callerName);
       notifyListeners();
       _startRinger();
     };
@@ -327,6 +488,16 @@ class AppState extends ChangeNotifier {
         activeCall!.state = CallState.connected;
         activeCall!.serviceCode = serviceCode;
         activeCall!.serviceName = serviceName;
+        if (serviceCode != null || serviceName != null) {
+          final id = activeCall!.logId;
+          if (id != null) {
+            _history.update(id, (e) {
+              if (serviceCode != null) e.serviceCode = serviceCode;
+              if (serviceName != null) e.serviceName = serviceName;
+            });
+          }
+        }
+        _markConnected();
         notifyListeners();
 
         // Ringback ends the moment the call is picked up.
@@ -402,6 +573,7 @@ class AppState extends ChangeNotifier {
       isIncoming: false,
       state: CallState.calling,
     );
+    _startOutgoingLog(destination);
     notifyListeners();
 
     try {
@@ -521,6 +693,7 @@ class AppState extends ChangeNotifier {
       _signaling.answerCall(activeCall!.callId, answer.sdp!);
 
       activeCall!.state = CallState.connected;
+      _markConnected();
       notifyListeners();
     } catch (e) {
       log('Answer failed: $e');
@@ -542,7 +715,7 @@ class AppState extends ChangeNotifier {
   void declineCall() {
     if (activeCall != null && activeCall!.isIncoming) {
       _signaling.hangup(activeCall!.callId);
-      _cleanupCall();
+      _cleanupCall(declined: true);
       notifyListeners();
     }
   }
@@ -565,7 +738,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _cleanupCall() {
+  void _cleanupCall({bool declined = false}) {
     final call = activeCall;
     _stopRinger();
     Ringback.stop();
@@ -574,6 +747,9 @@ class AppState extends ChangeNotifier {
     }
     call?.localStream?.dispose();
     call?.peerConnection?.close();
+    if (call != null) {
+      _finalizeCallLog(call, declined: declined);
+    }
     activeCall = null;
     isMuted = false;
     isSpeaker = false;

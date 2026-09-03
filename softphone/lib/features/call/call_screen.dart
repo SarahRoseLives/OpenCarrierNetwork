@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
+import '../../core/phone/number_format.dart';
 
 class CallScreen extends StatelessWidget {
   const CallScreen({super.key});
@@ -14,6 +15,30 @@ class CallScreen extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
+    // Caller ID: prefer the local contact book, then the name the server sent,
+    // then the formatted number.
+    final String displayName;
+    final String numberLine;
+    if (call.isService) {
+      displayName = call.serviceName ?? 'Service';
+      numberLine = call.serviceCode ?? '';
+    } else {
+      final formatted = displayNumber(
+        canonicalNumber(call.remoteNumber, ownArea: appState.phoneNumber?.areaCode),
+      );
+      final contact = appState.contactForNumber(call.remoteNumber);
+      if (contact != null) {
+        displayName = contact.name;
+        numberLine = displayNumber(contact.number);
+      } else if (call.remoteName.isNotEmpty) {
+        displayName = call.remoteName;
+        numberLine = formatted;
+      } else {
+        displayName = formatted.isEmpty ? call.remoteNumber : formatted;
+        numberLine = '';
+      }
+    }
+
     return Scaffold(
       backgroundColor: Colors.grey[900],
       body: SafeArea(
@@ -23,30 +48,18 @@ class CallScreen extends StatelessWidget {
 
             // Caller info
             Text(
-              call.isService
-                  ? call.serviceName ?? 'Service'
-                  : call.remoteName.isNotEmpty
-                      ? call.remoteName
-                      : call.remoteNumber,
+              displayName,
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 28,
                 fontWeight: FontWeight.w300,
               ),
             ),
-            if (!call.isService && call.remoteName.isNotEmpty)
+            if (numberLine.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
-                  call.remoteNumber,
-                  style: TextStyle(color: Colors.grey[400], fontSize: 16),
-                ),
-              ),
-            if (call.isService)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  call.serviceCode ?? '',
+                  numberLine,
                   style: TextStyle(color: Colors.grey[400], fontSize: 16),
                 ),
               ),

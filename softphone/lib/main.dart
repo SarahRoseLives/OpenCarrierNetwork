@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'core/app_state.dart';
 import 'core/fcm/fcm_service.dart';
-import 'features/dialer/dialer_screen.dart';
 import 'features/call/call_screen.dart';
+import 'features/contacts/contacts_screen.dart';
+import 'features/dialer/dialer_screen.dart';
+import 'features/history/history_screen.dart';
 import 'features/registration/registration_screen.dart';
 
 void main() async {
@@ -151,8 +153,8 @@ class _MainAppState extends State<MainApp> {
         index: _currentIndex,
         children: const [
           DialerScreen(),
-          CallHistoryPlaceholder(),
-          ContactsPlaceholder(),
+          HistoryScreen(),
+          ContactsScreen(),
           SettingsScreen(),
         ],
       ),
@@ -167,34 +169,6 @@ class _MainAppState extends State<MainApp> {
           NavigationDestination(icon: Icon(Icons.contacts), label: 'Contacts'),
           NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
         ],
-      ),
-    );
-  }
-}
-
-class CallHistoryPlaceholder extends StatelessWidget {
-  const CallHistoryPlaceholder({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Call History')),
-      body: const Center(
-        child: Text('Call history will appear here'),
-      ),
-    );
-  }
-}
-
-class ContactsPlaceholder extends StatelessWidget {
-  const ContactsPlaceholder({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Contacts')),
-      body: const Center(
-        child: Text('Contacts will appear here'),
       ),
     );
   }

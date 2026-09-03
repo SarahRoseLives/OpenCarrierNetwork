@@ -20,6 +20,7 @@ class KSimStorage {
     required String serverUrl,
     required String phoneNumber,
     required String passphrase,
+    String areaCode = '',
   }) async {
     log('KSimStorage.save: encrypting seed...');
     final encryptedSeed = await _encryptKey(keypair.seed, passphrase);
@@ -31,7 +32,7 @@ class KSimStorage {
       displayName: displayName,
       serverUrl: serverUrl,
       phoneNumber: phoneNumber,
-      areaCode: '',
+      areaCode: areaCode,
     );
     log('KSimStorage.save: complete');
   }
