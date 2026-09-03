@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package ocn.signaling;
+
+option go_package = "github.com/open-carrier-network/ocn/proto/signaling";
+
+import "common.proto";
+
+// Client-to-OCNServer messages (over WebSocket)
+message ClientMessage {
+  oneof payload {
+    RegisterRequest register = 1;
+    CallRequest call = 2;
+    CallAnswer call_answer = 3;
+    CallHangup call_hangup = 4;
+    ICECandidateTrickle ice_candidate = 5;
+    VoicemailListRequest voicemail_list = 6;
+    VoicemailFetchRequest voicemail_fetch = 7;
+    Ping ping = 8;
+  }
+}
+
+// OCNServer-to-Client messages (over WebSocket)
+message ServerMessage {
+  oneof payload {
+    RegisterResponse register_response = 1;
+    IncomingCall incoming_call = 2;
+    CallRinging call_ringing = 3;
+    CallConnected call_connected = 4;
+    CallEnded call_ended = 5;
+    ICECandidateTrickle ice_candidate = 6;
+    VoicemailListResponse voicemail_list = 7;
+    VoicemailFetchResponse voicemail_fetch = 8;
+    VoicemailNotification voicemail_notification = 9;
+    Error error = 10;
+    Pong pong = 11;
+  }
+}
+
+// Registration
+message RegisterRequest {
+  ocn.common.KSimID ksim_id = 1;
+  ocn.common.ChallengeResponse challenge_response = 2;
+  ocn.common.DisplayName display_name = 3;
+}
+
+message RegisterResponse {
+  bool success = 1;
+  ocn.common.PhoneNumber assigned_number = 2;
+  string error_message = 3;
+}
+
+// Calling
+message CallRequest {
+  string destination = 1;  // 7-digit local or 10-digit full number
+  ocn.common.SDPSession offer = 2;
+  ocn.common.ChallengeResponse auth = 3;
+}
+
+message IncomingCall {
+  string call_id = 1;
+  ocn.common.PhoneNumber caller_number = 2;
+  ocn.common.DisplayName caller_name = 3;
+  ocn.common.SDPSession offer = 4;
+}
+
+message CallAnswer {
+  string call_id = 1;
+  ocn.common.SDPSession answer = 2;
+}
+
+message CallRinging {
+  string call_id = 1;
+}
+
+message CallConnected {
+  string call_id = 1;
+}
+
+message CallEnded {
+  string call_id = 1;
+  string reason = 2;  // "hangup", "busy", "no_answer", "error"
+}
+
+message CallHangup {
+  string call_id = 1;
+}
+
+// ICE
+message ICECandidateTrickle {
+  string call_id = 1;
+  ocn.common.ICECandidate candidate = 2;
+}
+
+// Voicemail
+message VoicemailListRequest {
+  ocn.common.ChallengeResponse auth = 1;
+}
+
+message VoicemailEntry {
+  string id = 1;
+  ocn.common.PhoneNumber caller_number = 2;
+  ocn.common.DisplayName caller_name = 3;
+  int64 timestamp = 4;
+  int32 duration_seconds = 5;
+}
+
+message VoicemailListResponse {
+  repeated VoicemailEntry messages = 1;
+}
+
+message VoicemailFetchRequest {
+  string voicemail_id = 1;
+  ocn.common.ChallengeResponse auth = 2;
+}
+
+message VoicemailFetchResponse {
+  string voicemail_id = 1;
+  bytes encrypted_audio = 2;  // AES-256 encrypted with recipient's public key
+  string format = 3;          // "opus", "wav"
+}
+
+message VoicemailNotification {
+  int32 count = 1;  // Number of new voicemails
+}
+
+// Keepalive
+message Ping {}
+message Pong {}
+
+// Error
+message Error {
+  int32 code = 1;
+  string message = 2;
+}

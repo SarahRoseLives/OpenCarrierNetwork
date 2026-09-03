@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package ocn.registry;
+
+option go_package = "github.com/open-carrier-network/ocn/proto/registry";
+
+import "common.proto";
+
+service OCNRegistry {
+  // OCNServer management
+  rpc RegisterOCNServer(RegisterOCNServerRequest) returns (RegisterOCNServerResponse);
+  rpc DeregisterOCNServer(DeregisterOCNServerRequest) returns (google.protobuf.Empty);
+  rpc ListOCNServers(ListOCNServersRequest) returns (ListOCNServersResponse);
+
+  // Routing
+  rpc GetRoute(GetRouteRequest) returns (GetRouteResponse);
+
+  // STUN
+  rpc GetICECandidates(ICECandidateRequest) returns (ICECandidateResponse);
+}
+
+// OCNServer registration
+message RegisterOCNServerRequest {
+  string name = 1;
+  string description = 2;
+  string server_address = 3;   // gRPC endpoint for this ocnserver
+  bytes ocnserver_public_key = 4;  // Ed25519 public key for ocnserver identity
+  string requested_area_code = 5;  // Optional preference, empty = auto-assign
+}
+
+message RegisterOCNServerResponse {
+  bool success = 1;
+  string assigned_area_code = 2;
+  string error_message = 3;
+}
+
+message DeregisterOCNServerRequest {
+  string area_code = 1;
+  bytes ocnserver_public_key = 2;  // Must sign to prove ownership
+}
+
+// OCNServer directory
+message OCNServerInfo {
+  string area_code = 1;
+  string name = 2;
+  string description = 3;
+  string server_address = 4;
+  bytes ocnserver_public_key = 5;
+  int64 registered_at = 6;
+  string status = 7;  // "ACTIVE", "SUSPENDED"
+}
+
+message ListOCNServersRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message ListOCNServersResponse {
+  repeated OCNServerInfo ocnservers = 1;
+  int32 total_count = 2;
+}
+
+// Routing
+message GetRouteRequest {
+  string area_code = 1;
+}
+
+message GetRouteResponse {
+  bool found = 1;
+  OCNServerInfo ocnserver = 2;
+}
+
+// STUN
+message ICECandidateRequest {
+  bytes client_id = 1;  // kSIM public key or session ID
+}
+
+message ICECandidateResponse {
+  repeated ocn.common.ICECandidate candidates = 1;
+  string server_reflexive_address = 2;  // STUN-derived public IP:port
+}

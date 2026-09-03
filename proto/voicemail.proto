@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package ocn.voicemail;
+
+option go_package = "github.com/open-carrier-network/ocn/proto/voicemail";
+
+import "common.proto";
+
+// Voicemail service on the exchange
+service VoicemailService {
+  rpc UploadVoicemail(UploadVoicemailRequest) returns (UploadVoicemailResponse);
+  rpc FetchVoicemail(FetchVoicemailRequest) returns (FetchVoicemailResponse);
+  rpc DeleteVoicemail(DeleteVoicemailRequest) returns (google.protobuf.Empty);
+  rpc ListVoicemails(ListVoicemailsRequest) returns (ListVoicemailsResponse);
+}
+
+message UploadVoicemailRequest {
+  ocn.common.PhoneNumber caller_number = 1;
+  ocn.common.DisplayName caller_name = 2;
+  ocn.common.PhoneNumber recipient_number = 3;
+  bytes encrypted_audio = 4;  // Pre-encrypted by caller with recipient's public key
+  string format = 5;          // "opus", "wav"
+  int32 duration_seconds = 6;
+}
+
+message UploadVoicemailResponse {
+  bool success = 1;
+  string voicemail_id = 2;
+}
+
+message FetchVoicemailRequest {
+  string voicemail_id = 1;
+  ocn.common.ChallengeResponse auth = 2;  // Must prove ownership
+}
+
+message FetchVoicemailResponse {
+  bytes encrypted_audio = 1;
+  string format = 2;
+  int32 duration_seconds = 3;
+  ocn.common.PhoneNumber caller_number = 4;
+  ocn.common.DisplayName caller_name = 5;
+  int64 timestamp = 6;
+}
+
+message DeleteVoicemailRequest {
+  string voicemail_id = 1;
+  ocn.common.ChallengeResponse auth = 2;
+}
+
+message ListVoicemailsRequest {
+  ocn.common.ChallengeResponse auth = 1;
+}
+
+message VoicemailEntry {
+  string id = 1;
+  ocn.common.PhoneNumber caller_number = 2;
+  ocn.common.DisplayName caller_name = 3;
+  int64 timestamp = 4;
+  int32 duration_seconds = 5;
+  bool listened = 6;
+}
+
+message ListVoicemailsResponse {
+  repeated VoicemailEntry messages = 1;
+}

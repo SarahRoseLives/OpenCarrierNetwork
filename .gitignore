@@ -1,0 +1,26 @@
+# Binaries
+ocnserver/ocnserver
+*.exe
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Key files
+*.key
+
+# TTS cache
+ocnserver/tts_cache/
+
+# Flutter build
+softphone/build/
+softphone/.dart_tool/
+softphone/.packages
+
+# Go build
+ocnserver/ocnserver
+
+# OS files
+.DS_Store
+Thumbs.db

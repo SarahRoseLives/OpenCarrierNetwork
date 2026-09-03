@@ -1,0 +1,196 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../core/app_state.dart';
+
+class CallScreen extends StatelessWidget {
+  const CallScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final appState = context.watch<AppState>();
+    final call = appState.activeCall;
+
+    if (call == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Scaffold(
+      backgroundColor: Colors.grey[900],
+      body: SafeArea(
+        child: Column(
+          children: [
+            const Spacer(flex: 2),
+
+            // Caller info
+            Text(
+              call.isService
+                  ? call.serviceName ?? 'Service'
+                  : call.remoteName.isNotEmpty
+                      ? call.remoteName
+                      : call.remoteNumber,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 28,
+                fontWeight: FontWeight.w300,
+              ),
+            ),
+            if (!call.isService && call.remoteName.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  call.remoteNumber,
+                  style: TextStyle(color: Colors.grey[400], fontSize: 16),
+                ),
+              ),
+            if (call.isService)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  call.serviceCode ?? '',
+                  style: TextStyle(color: Colors.grey[400], fontSize: 16),
+                ),
+              ),
+
+            const SizedBox(height: 16),
+
+            // Call status
+            Text(
+              _statusText(call.state),
+              style: TextStyle(color: Colors.grey[400], fontSize: 14),
+            ),
+
+            const Spacer(flex: 3),
+
+            // Controls - different for incoming vs outgoing
+            if (call.isIncoming && call.state == CallState.ringing)
+              _buildIncomingControls(context, appState)
+            else
+              _buildActiveCallControls(context, appState),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIncomingControls(BuildContext context, AppState appState) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 48),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          // Decline
+          _CallControlButton(
+            icon: Icons.call_end,
+            label: 'Decline',
+            isActive: true,
+            color: Colors.red,
+            onPressed: () {
+              appState.declineCall();
+            },
+          ),
+
+          // Answer
+          _CallControlButton(
+            icon: Icons.call,
+            label: 'Answer',
+            isActive: true,
+            color: Colors.green,
+            onPressed: () {
+              appState.answerCall();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActiveCallControls(BuildContext context, AppState appState) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 48),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          // Mute
+          _CallControlButton(
+            icon: appState.isMuted ? Icons.mic_off : Icons.mic,
+            label: 'Mute',
+            isActive: appState.isMuted,
+            onPressed: appState.toggleMute,
+          ),
+
+          // Hangup
+          _CallControlButton(
+            icon: Icons.call_end,
+            label: 'End',
+            isActive: true,
+            color: Colors.red,
+            onPressed: () {
+              appState.hangup();
+            },
+          ),
+
+          // Speaker
+          _CallControlButton(
+            icon: appState.isSpeaker ? Icons.volume_up : Icons.volume_down,
+            label: 'Speaker',
+            isActive: appState.isSpeaker,
+            onPressed: appState.toggleSpeaker,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _statusText(CallState state) {
+    switch (state) {
+      case CallState.calling:
+        return 'Calling...';
+      case CallState.ringing:
+        return 'Ringing...';
+      case CallState.connected:
+        return 'Connected';
+      case CallState.ended:
+        return 'Call ended';
+      default:
+        return '';
+    }
+  }
+}
+
+class _CallControlButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isActive;
+  final Color? color;
+  final VoidCallback onPressed;
+
+  const _CallControlButton({
+    required this.icon,
+    required this.label,
+    required this.isActive,
+    this.color,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        FloatingActionButton(
+          onPressed: onPressed,
+          backgroundColor: color ?? (isActive ? Colors.white : Colors.grey[700]),
+          child: Icon(
+            icon,
+            color: color != null ? Colors.white : (isActive ? Colors.black : Colors.white),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          label,
+          style: TextStyle(color: Colors.grey[400], fontSize: 12),
+        ),
+      ],
+    );
+  }
+}

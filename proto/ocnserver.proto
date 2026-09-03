@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package ocn.ocnserver;
+
+option go_package = "github.com/open-carrier-network/ocn/proto/ocnserver";
+
+import "common.proto";
+
+// OCNServer-to-OCNServer service for cross-server calls
+service OCNServerService {
+  rpc IncomingCall(IncomingCallRequest) returns (IncomingCallResponse);
+  rpc CallAnswered(CallAnsweredRequest) returns (CallAnsweredResponse);
+  rpc CallEnded(CallEndedRequest) returns (google.protobuf.Empty);
+  rpc ICECandidateExchange(ICEExchangeRequest) returns (ICEExchangeResponse);
+}
+
+message IncomingCallRequest {
+  string call_id = 1;
+  ocn.common.PhoneNumber caller_number = 2;
+  ocn.common.DisplayName caller_name = 3;
+  ocn.common.PhoneNumber destination_number = 4;
+  ocn.common.SDPSession offer = 5;
+  string source_area_code = 6;
+}
+
+message IncomingCallResponse {
+  bool accepted = 1;
+  ocn.common.SDPSession answer = 2;
+  string error_message = 3;
+}
+
+message CallAnsweredRequest {
+  string call_id = 1;
+  ocn.common.SDPSession answer = 2;
+}
+
+message CallAnsweredResponse {
+  bool success = 1;
+}
+
+message CallEndedRequest {
+  string call_id = 1;
+  string reason = 2;
+}
+
+message ICEExchangeRequest {
+  string call_id = 1;
+  repeated ocn.common.ICECandidate candidates = 2;
+}
+
+message ICEExchangeResponse {
+  bool success = 1;
+}

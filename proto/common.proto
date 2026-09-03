@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package ocn.common;
+
+option go_package = "github.com/open-carrier-network/ocn/proto/common";
+
+message PhoneNumber {
+  string area_code = 1;    // 3 digits
+  string number = 2;       // 7 digits (local number)
+}
+
+message KSimID {
+  bytes public_key = 1;    // Ed25519 public key (32 bytes)
+}
+
+message DisplayName {
+  string name = 1;         // Caller ID display name
+}
+
+message User {
+  KSimID ksim_id = 1;
+  PhoneNumber phone_number = 2;
+  DisplayName display_name = 3;
+  string exchange_area_code = 4;
+  int64 registered_at = 5;  // Unix timestamp
+}
+
+message Challenge {
+  bytes nonce = 32;        // Random challenge nonce
+  int64 timestamp = 1;     // Server timestamp
+}
+
+message ChallengeResponse {
+  bytes signature = 1;     // Ed25519 signature of nonce+timestamp
+  KSimID ksim_id = 2;
+}
+
+message SDPSession {
+  string sdp = 1;
+  string type = 2;         // "offer" or "answer"
+}
+
+message ICECandidate {
+  string candidate = 1;
+  string sdp_mid = 2;
+  int32 sdp_mline_index = 3;
+}
