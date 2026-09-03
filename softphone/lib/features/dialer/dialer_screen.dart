@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/app_state.dart';
+import '../../core/audio/dtmf_tones.dart';
+import 'dial_number_format.dart';
 
 class DialerScreen extends StatefulWidget {
   const DialerScreen({super.key});
@@ -13,6 +15,7 @@ class _DialerScreenState extends State<DialerScreen> {
   String _dialNumber = '';
 
   void _onDigitPressed(String digit) {
+    DtmfTones.play(digit);
     setState(() {
       _dialNumber += digit;
     });
@@ -99,7 +102,7 @@ class _DialerScreenState extends State<DialerScreen> {
             padding: const EdgeInsets.all(24),
             width: double.infinity,
             child: Text(
-              _formatDialNumber(_dialNumber),
+              formatDialNumber(_dialNumber),
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w300),
             ),
@@ -160,14 +163,6 @@ class _DialerScreenState extends State<DialerScreen> {
         );
       }).toList(),
     );
-  }
-
-  String _formatDialNumber(String number) {
-    if (number.length <= 3) return number;
-    if (number.length <= 7) {
-      return '${number.substring(0, 3)}-${number.substring(3)}';
-    }
-    return '${number.substring(0, 3)}-${number.substring(3, 7)}-${number.substring(7)}';
   }
 }
 
