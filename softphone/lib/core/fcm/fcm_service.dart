@@ -8,20 +8,31 @@ import '../notifications/call_notifications.dart';
 /// Callback when FCM delivers an incoming call notification
 typedef OnFCMCall = void Function(String callId, String callerNumber, String callerName);
 
+/// Callback when an FCM token becomes available (initial or refreshed).
+typedef OnFCMToken = void Function(String token);
+
 class FCMService {
   static FirebaseMessaging? _messaging;
   static String? _token;
   static OnFCMCall? _onCall;
+  static OnFCMToken? _onToken;
   static StreamSubscription? _tokenSub;
+  static Timer? _retryTimer;
+  static int _retryAttempts = 0;
 
   /// Initialize Firebase and FCM. Android only.
-  static Future<String?> init({OnFCMCall? onCall}) async {
+  ///
+  /// [onToken] is invoked whenever a token becomes available — at startup or
+  /// later (retries / refresh) — so the caller can push it to the server even
+  /// if Firebase was slow to hand one out.
+  static Future<String?> init({OnFCMCall? onCall, OnFCMToken? onToken}) async {
     if (!Platform.isAndroid) {
       log('FCM: skipped (not Android)');
       return null;
     }
 
     _onCall = onCall;
+    _onToken = onToken;
 
     try {
       await Firebase.initializeApp();
@@ -38,14 +49,13 @@ class FCMService {
         );
       });
 
-      // Get token
-      _token = await _messaging!.getToken();
-      log('FCM: token=$_token');
+      _token = await _fetchTokenWithRetry();
 
       // Listen for token refresh
       _tokenSub = _messaging!.onTokenRefresh.listen((newToken) {
         log('FCM: token refreshed');
         _token = newToken;
+        _onToken?.call(newToken);
       });
 
       // Handle foreground messages
@@ -69,11 +79,60 @@ class FCMService {
         _wakeOnly(message.data);
       });
 
+      if (_token == null) {
+        // Firebase did not hand out a token yet (e.g. freshly installed or
+        // Play services still registering). Keep retrying in the background so
+        // the token eventually reaches the server.
+        _scheduleTokenRetry();
+      }
+
       return _token;
     } catch (e) {
       log('FCM: init failed: $e');
       return null;
     }
+  }
+
+  /// Tries getToken a few times up front (short backoff), then gives up so the
+  /// caller can fall back to the background retry timer.
+  static Future<String?> _fetchTokenWithRetry() async {
+    for (var i = 0; i < 3; i++) {
+      try {
+        final t = await _messaging!.getToken();
+        if (t != null && t.isNotEmpty) {
+          log('FCM: token acquired (len=${t.length})');
+          _onToken?.call(t);
+          return t;
+        }
+      } catch (e) {
+        log('FCM: getToken attempt $i failed: $e');
+      }
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    return null;
+  }
+
+  static void _scheduleTokenRetry() {
+    _retryTimer?.cancel();
+    _retryAttempts = 0;
+    _retryTimer = Timer.periodic(const Duration(seconds: 20), (timer) async {
+      _retryAttempts++;
+      if (_retryAttempts > 30) {
+        timer.cancel();
+        return;
+      }
+      try {
+        final t = await _messaging?.getToken();
+        if (t != null && t.isNotEmpty) {
+          log('FCM: token acquired on background retry');
+          _token = t;
+          _onToken?.call(t);
+          timer.cancel();
+        }
+      } catch (e) {
+        log('FCM: background token retry failed: $e');
+      }
+    });
   }
 
   static String? get token => _token;
@@ -112,6 +171,8 @@ class FCMService {
 
   static void dispose() {
     _tokenSub?.cancel();
+    _retryTimer?.cancel();
+    _retryTimer = null;
   }
 }
 

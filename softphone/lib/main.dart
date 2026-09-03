@@ -57,6 +57,9 @@ class _OcnSoftphoneAppState extends State<OcnSoftphoneApp> {
         // the queued call over the WebSocket.
         _appState.wakeForIncomingCall();
       },
+      onToken: (t) {
+        _appState.setFCMToken(t);
+      },
     );
     if (token != null) {
       _appState.setFCMToken(token);

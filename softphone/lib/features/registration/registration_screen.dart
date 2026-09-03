@@ -14,7 +14,9 @@ class RegistrationScreen extends StatefulWidget {
 class _RegistrationScreenState extends State<RegistrationScreen> {
   final _nameController = TextEditingController();
   final _pasteController = TextEditingController();
+  OcnKsimUri? _parsed;
   bool _nameWasPrefilled = false;
+  String? _linkError;
 
   @override
   void dispose() {
@@ -23,22 +25,40 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     super.dispose();
   }
 
-  void _useLink(OcnKsimUri link) {
+  /// Applies a parsed link. Uses local state so the UI always updates, and
+  /// mirrors it into AppState so it survives the connecting/error screen
+  /// transitions during activation.
+  void _apply(OcnKsimUri link) {
     final appState = context.read<AppState>();
     appState.setProvisionIntent(link);
-    if (link.displayName.isNotEmpty) {
-      _nameWasPrefilled = true;
-      _nameController.text = link.displayName;
-    }
+    setState(() {
+      _parsed = link;
+      _linkError = null;
+      if (link.displayName.isNotEmpty) {
+        _nameController.text = link.displayName;
+        _nameWasPrefilled = true;
+      }
+    });
   }
 
   void _usePastedLink() {
-    final parsed = OcnKsimUri.parse(_pasteController.text);
-    if (parsed == null) {
-      _showSnack('That does not look like a valid ocnksim:// provisioning link.');
-      return;
+    try {
+      debugPrint('Use this link: pasted ${_pasteController.text.length} chars');
+      final parsed = OcnKsimUri.parse(_pasteController.text);
+      if (parsed == null) {
+        setState(() {
+          _linkError =
+              'That does not look like a valid provisioning link. Copy the full '
+              'ocnksim://… URL from the admin panel and paste it here.';
+        });
+        return;
+      }
+      debugPrint('Use this link: parsed server=${parsed.serverUrl} tokenLen=${parsed.token.length}');
+      _apply(parsed);
+    } catch (e, st) {
+      debugPrint('Use this link error: $e\n$st');
+      setState(() => _linkError = 'Unexpected error: $e');
     }
-    _useLink(parsed);
   }
 
   Future<void> _scanQr() async {
@@ -48,34 +68,44 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     if (raw == null || !mounted) return;
     final parsed = OcnKsimUri.parse(raw);
     if (parsed == null) {
-      _showSnack('That QR code is not an ocnksim:// provisioning link.');
+      setState(() => _linkError =
+          'That QR code is not an ocnksim:// provisioning link.');
       return;
     }
-    _useLink(parsed);
-  }
-
-  void _showSnack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    _apply(parsed);
   }
 
   void _activate() {
-    final appState = context.read<AppState>();
-    final provision = appState.pendingProvision;
-    if (provision == null || _nameController.text.trim().isEmpty) return;
-    if (appState.status == AppStatus.error) {
-      appState.clearError();
+    try {
+      final appState = context.read<AppState>();
+      final provision = _parsed;
+      if (provision == null || _nameController.text.trim().isEmpty) {
+        setState(() => _linkError = 'Enter a display name first.');
+        return;
+      }
+      if (appState.status == AppStatus.error) {
+        appState.clearError();
+      }
+      debugPrint('Activating on ${provision.serverUrl} with token len ${provision.token.length}');
+      appState.register(
+        provision.serverUrl,
+        _nameController.text.trim(),
+        activationToken: provision.token,
+      );
+    } catch (e, st) {
+      debugPrint('Activate error: $e\n$st');
+      setState(() => _linkError = 'Unexpected error: $e');
     }
-    appState.register(
-      provision.serverUrl,
-      _nameController.text.trim(),
-      activationToken: provision.token,
-    );
   }
 
   void _startOver() {
     context.read<AppState>().clearProvisionIntent();
     _nameController.clear();
-    _nameWasPrefilled = false;
+    setState(() {
+      _parsed = null;
+      _nameWasPrefilled = false;
+      _linkError = null;
+    });
   }
 
   @override
@@ -86,17 +116,18 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       return const SizedBox.shrink();
     }
 
-    final provision = appState.pendingProvision;
+    // Restore from a deep link / pending intent (e.g. after the screen was
+    // recreated during the connecting → error transition).
+    if (_parsed == null && appState.pendingProvision != null) {
+      _parsed = appState.pendingProvision;
+      if (_parsed!.displayName.isNotEmpty && !_nameWasPrefilled) {
+        _nameController.text = _parsed!.displayName;
+      }
+    }
+
+    final provision = _parsed;
     final busy = appState.status == AppStatus.connecting;
     final error = appState.status == AppStatus.error ? appState.errorMessage : null;
-
-    // Keep the display-name field in sync with a freshly applied link.
-    if (provision != null && !_nameWasPrefilled && _nameController.text.isEmpty) {
-      if (provision.displayName.isNotEmpty) {
-        _nameController.text = provision.displayName;
-      }
-      _nameWasPrefilled = true;
-    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Provision phone')),
@@ -127,7 +158,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               SizedBox(
                 height: 48,
                 child: ElevatedButton.icon(
-                  onPressed: _scanQr,
+                  onPressed: busy ? null : _scanQr,
                   icon: const Icon(Icons.qr_code_scanner),
                   label: const Text('Scan provisioning QR code'),
                 ),
@@ -144,9 +175,16 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                   prefixIcon: Icon(Icons.link),
                 ),
               ),
+              if (_linkError != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _linkError!,
+                  style: const TextStyle(color: Colors.red, fontSize: 12),
+                ),
+              ],
               const SizedBox(height: 12),
               OutlinedButton(
-                onPressed: _usePastedLink,
+                onPressed: busy ? null : _usePastedLink,
                 child: const Text('Use this link'),
               ),
             ] else ...[

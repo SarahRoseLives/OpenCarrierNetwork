@@ -14,10 +14,12 @@ class OcnKsimUri {
   bool get isValid => serverUrl.isNotEmpty && token.isNotEmpty;
 
   /// Parse a raw deep link string. Returns null if it isn't a valid
-  /// ocnksim:// provisioning link.
+  /// ocnksim:// provisioning link. Both the current `ocnksim://` scheme and the
+  /// legacy `ocn_ksim://` form are accepted.
   static OcnKsimUri? parse(String raw) {
     final text = raw.trim();
-    if (!text.toLowerCase().startsWith('ocnksim://')) {
+    if (!text.toLowerCase().startsWith('ocnksim://') &&
+        !text.toLowerCase().startsWith('ocn_ksim://')) {
       return null;
     }
 

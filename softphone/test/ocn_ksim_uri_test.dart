@@ -12,6 +12,15 @@ void main() {
     expect(p.displayName, 'Rose test');
   });
 
+  test('accepts legacy ocn_ksim:// scheme too', () {
+    final p = OcnKsimUri.parse(
+      'ocn_ksim://host/?server=ws%3A%2F%2Fhost%3A9100%2Fws&token=abc',
+    );
+    expect(p, isNotNull);
+    expect(p!.token, 'abc');
+    expect(p.serverUrl, 'ws://host:9100/ws');
+  });
+
   test('rejects non-provisioning strings', () {
     expect(OcnKsimUri.parse('https://example.com'), isNull);
     expect(OcnKsimUri.parse('ocnksim://host'), isNull);

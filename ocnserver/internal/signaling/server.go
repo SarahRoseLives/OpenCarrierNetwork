@@ -210,7 +210,12 @@ func (srv *Server) handleRegister(client *Client, msg *RegisterRequest) {
 			displayName,
 		)
 		if err != nil {
-			log.Printf("Provision failed: %v", err)
+			prefix := ""
+			if len(msg.ActivationToken) >= 8 {
+				prefix = msg.ActivationToken[:8]
+			}
+			log.Printf("Provision failed (pubkey=%x token_len=%d token_prefix=%q): %v",
+				msg.KsimID.PublicKey, len(msg.ActivationToken), prefix, err)
 			switch {
 			case err == store.ErrTokenRequired:
 				srv.sendError(client, 400, "missing provisioning token in register")
