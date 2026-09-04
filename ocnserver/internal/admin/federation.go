@@ -9,14 +9,23 @@ import (
 	"github.com/open-carrier-network/ocn/internal/store"
 )
 
-// handleFederationStatus reports the panel-saved federation settings plus the
-// currently assigned area code (from this server's live state/config).
+// handleFederationStatus reports how this exchange is federated. Source of
+// truth is the effective registry address: either the panel-saved settings OR
+// the registry this server was configured to join at boot (config file). A
+// server federated via its config file is still federated.
 func (s *Server) handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 	fs, err := s.store.GetFederationSettings()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	panelManaged := fs.RegistryAddress != ""
+	registryAddr := fs.RegistryAddress
+	if registryAddr == "" {
+		registryAddr = s.opts.RegistryAddress
+	}
+	configured := registryAddr != ""
+
 	area, _ := s.store.GetSetting("area_code")
 	liveArea := area
 	if s.opts.Area != nil {
@@ -25,8 +34,9 @@ func (s *Server) handleFederationStatus(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"configured":                fs.RegistryAddress != "",
-		"registry_address":          fs.RegistryAddress,
+		"configured":                configured,
+		"panel_managed":             panelManaged,
+		"registry_address":          registryAddr,
 		"registry_insecure":         fs.RegistryInsecure,
 		"requested_area_code":       fs.RequestedAreaCode,
 		"federation_public_address": fs.FederationPublicAddr,

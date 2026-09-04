@@ -269,15 +269,16 @@ func main() {
 
 	// Admin web panel (provisioning + line management) on its own port
 	adminSrv := admin.New(admin.Options{
-		Store:         db,
-		Online:        sigServer.OnlineNumbers,
-		SignalingPort: cfg.Port,
-		PublicAddress: cfg.PublicAddress,
-		AreaCode:      areaCode,
-		Area:          func() string { return areaCode },
-		ServerName:    cfg.ServerName,
-		ServerKeyPath: cfg.ServerKeyPath,
-		OnFederated:   applyFederation,
+		Store:           db,
+		Online:          sigServer.OnlineNumbers,
+		SignalingPort:   cfg.Port,
+		PublicAddress:   cfg.PublicAddress,
+		AreaCode:        areaCode,
+		Area:            func() string { return areaCode },
+		ServerName:      cfg.ServerName,
+		ServerKeyPath:   cfg.ServerKeyPath,
+		RegistryAddress: regAddress,
+		OnFederated:     applyFederation,
 	})
 
 	// Set up HTTP routes

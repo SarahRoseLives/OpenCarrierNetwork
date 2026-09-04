@@ -38,6 +38,9 @@ type Options struct {
 
 	// Area returns the live server area code (updates on hot federation).
 	Area func() string
+	// RegistryAddress is the registry this server is configured to join (from
+	// its config file). Empty when running standalone or panel-configured.
+	RegistryAddress string
 	// OnFederated is called after a successful registration so the running
 	// server can hot-join (attach registry, set area code, enable push)
 	// without a restart. Return an error to signal live activation failed.

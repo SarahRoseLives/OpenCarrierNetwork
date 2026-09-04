@@ -292,19 +292,23 @@ async function loadFederation() {
     const area = d.area_code || d.server_area_code || "—";
     const rows = d.configured
       ? [
+          ["Status", "Federated — active"],
           ["Registry", d.registry_address],
           ["Insecure", d.registry_insecure ? "yes (dev)" : "no"],
           ["Requested area code", d.requested_area_code || "(auto)"],
-          ["Federation public address", d.federation_public_address || "—"],
+          ["Federation public address", d.federation_public_address || "(config)"],
           ["Assigned area code", area],
         ]
       : [["Status", "Standalone — not federated"], ["Assigned area code", area]];
+    const hint = d.configured
+      ? d.panel_managed
+        ? '<p class="muted small">Settings are stored and re-applied on startup.</p>'
+        : '<p class="muted small">Federated via the server config file. Use the form below to switch or clear it.</p>'
+      : '<p class="muted small">Register below to join the network and receive an area code.</p>';
     $("fed-status").innerHTML =
       "<h3>Current status</h3>" +
       rows.map(([k, v]) => `<p><strong>${esc(k)}:</strong> ${esc(v)}</p>`).join("") +
-      (d.configured
-        ? '<p class="muted small">Restart the server to apply. Settings are stored and re-applied on startup.</p>'
-        : '<p class="muted small">Register below to join the network and receive an area code.</p>');
+      hint;
   } catch (e) {
     $("fed-status").innerHTML = '<p class="error">' + esc(e.message) + "</p>";
   }
