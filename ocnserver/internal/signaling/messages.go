@@ -12,8 +12,15 @@ type ClientMessage struct {
 	Call             *CallRequest         `json:"call,omitempty"`
 	CallAnswer       *CallAnswer          `json:"call_answer,omitempty"`
 	CallHangup       *CallHangup          `json:"call_hangup,omitempty"`
+	CallDecline      *CallDecline         `json:"call_decline,omitempty"`
 	ICECandidate     *ICECandidateTrickle `json:"ice_candidate,omitempty"`
 	Ping             *Ping                `json:"ping,omitempty"`
+
+	// Voicemail retrieval (visual voicemail)
+	VoicemailList     *VoicemailListReq     `json:"voicemail_list,omitempty"`
+	VoicemailGet      *VoicemailGetReq      `json:"voicemail_get,omitempty"`
+	VoicemailDelete   *VoicemailDeleteReq   `json:"voicemail_delete,omitempty"`
+	VoicemailMarkRead *VoicemailMarkReadReq `json:"voicemail_mark_read,omitempty"`
 }
 
 // ServerMessage represents a message from exchange to client
@@ -27,6 +34,11 @@ type ServerMessage struct {
 	ICECandidate      *ICECandidateTrickle  `json:"ice_candidate,omitempty"`
 	Error             *Error                `json:"error,omitempty"`
 	Pong              *Pong                 `json:"pong,omitempty"`
+
+	// Voicemail responses / events
+	VoicemailListResponse *VoicemailListResponse `json:"voicemail_list_response,omitempty"`
+	VoicemailGetResponse  *VoicemailGetResponse  `json:"voicemail_get_response,omitempty"`
+	VoicemailEvent        *VoicemailEvent        `json:"voicemail_event,omitempty"`
 }
 
 type ChallengeRequest struct {
@@ -104,6 +116,12 @@ type CallHangup struct {
 	CallID string `json:"call_id"`
 }
 
+// CallDecline marks an incoming call as explicitly declined (routes the
+// caller to voicemail).
+type CallDecline struct {
+	CallID string `json:"call_id"`
+}
+
 type ICECandidateTrickle struct {
 	CallID    string        `json:"call_id"`
 	Candidate *ICECandidate `json:"candidate"`
@@ -111,6 +129,51 @@ type ICECandidateTrickle struct {
 
 type Ping struct{}
 type Pong struct{}
+
+// Voicemail list request (empty body).
+type VoicemailListReq struct{}
+
+// VoicemailInfo describes one stored message for the list.
+type VoicemailInfo struct {
+	ID              string `json:"id"`
+	CallerNumber    string `json:"caller_number"` // canonical digits
+	CallerName      string `json:"caller_name"`
+	DurationSeconds int32  `json:"duration_seconds"`
+	Listened        bool   `json:"listened"`
+	CreatedAt       int64  `json:"created_at"` // unix seconds
+}
+
+type VoicemailListResponse struct {
+	Messages []VoicemailInfo `json:"messages"`
+	Unread   int             `json:"unread"`
+}
+
+type VoicemailGetReq struct {
+	ID string `json:"id"`
+}
+
+// VoicemailGetResponse returns a message plus its audio (base64 Ogg/Opus).
+type VoicemailGetResponse struct {
+	ID          string `json:"id"`
+	AudioBase64 string `json:"audio_b64"`
+}
+
+type VoicemailDeleteReq struct {
+	ID string `json:"id"`
+}
+
+type VoicemailMarkReadReq struct {
+	ID string `json:"id"`
+}
+
+// VoicemailEvent is pushed to a connected recipient when their mailbox
+// changes (e.g. a new message arrived).
+type VoicemailEvent struct {
+	Action       string `json:"action"` // "new"
+	CallerNumber string `json:"caller_number"`
+	CallerName   string `json:"caller_name"`
+	Unread       int    `json:"unread"`
+}
 
 type Error struct {
 	Code    int32  `json:"code"`

@@ -178,11 +178,21 @@ func (s *Server) PushDevice(ctx context.Context, req *pb.PushDeviceRequest) (*em
 	if err := s.store.VerifyPushAuth(req.AreaCode, req.Timestamp, []byte(req.Token), req.Signature); err != nil {
 		return nil, status.Error(codes.PermissionDenied, err.Error())
 	}
-	if req.Token == "" || req.CallId == "" {
-		return nil, status.Error(codes.InvalidArgument, "token and call_id are required")
+	if req.Token == "" {
+		return nil, status.Error(codes.InvalidArgument, "token is required")
 	}
-	if err := s.push.SendCallNotification(req.Token, req.CallId, req.CallerNumber, req.CallerName); err != nil {
-		return nil, status.Error(codes.Unavailable, err.Error())
+	switch req.MessageType {
+	case "voicemail":
+		if err := s.push.SendVoicemailNotification(req.Token, req.CallerNumber, req.CallerName); err != nil {
+			return nil, status.Error(codes.Unavailable, err.Error())
+		}
+	default:
+		if req.CallId == "" {
+			return nil, status.Error(codes.InvalidArgument, "token and call_id are required")
+		}
+		if err := s.push.SendCallNotification(req.Token, req.CallId, req.CallerNumber, req.CallerName); err != nil {
+			return nil, status.Error(codes.Unavailable, err.Error())
+		}
 	}
 	return &emptypb.Empty{}, nil
 }

@@ -8,6 +8,9 @@ import '../notifications/call_notifications.dart';
 /// Callback when FCM delivers an incoming call notification
 typedef OnFCMCall = void Function(String callId, String callerNumber, String callerName);
 
+/// Callback when FCM delivers a new-voicemail notification.
+typedef OnFCMVoicemail = void Function(String callerNumber, String callerName);
+
 /// Callback when an FCM token becomes available (initial or refreshed).
 typedef OnFCMToken = void Function(String token);
 
@@ -15,6 +18,7 @@ class FCMService {
   static FirebaseMessaging? _messaging;
   static String? _token;
   static OnFCMCall? _onCall;
+  static OnFCMVoicemail? _onVoicemail;
   static OnFCMToken? _onToken;
   static StreamSubscription? _tokenSub;
   static Timer? _retryTimer;
@@ -25,13 +29,18 @@ class FCMService {
   /// [onToken] is invoked whenever a token becomes available — at startup or
   /// later (retries / refresh) — so the caller can push it to the server even
   /// if Firebase was slow to hand one out.
-  static Future<String?> init({OnFCMCall? onCall, OnFCMToken? onToken}) async {
+  static Future<String?> init({
+    OnFCMCall? onCall,
+    OnFCMVoicemail? onVoicemail,
+    OnFCMToken? onToken,
+  }) async {
     if (!Platform.isAndroid) {
       log('FCM: skipped (not Android)');
       return null;
     }
 
     _onCall = onCall;
+    _onVoicemail = onVoicemail;
     _onToken = onToken;
 
     try {
@@ -151,6 +160,17 @@ class FCMService {
 
   static void _handleMessageData(Map<String, dynamic> data) {
     final type = data['type'] as String?;
+    if (type == 'voicemail') {
+      final callerNumber = data['caller_number'] as String? ?? '';
+      final callerName = data['caller_name'] as String? ?? '';
+      log('FCM: voicemail from $callerNumber ($callerName)');
+      CallNotifications.showVoicemail(
+        callerNumber: callerNumber,
+        callerName: callerName,
+      );
+      _onVoicemail?.call(callerNumber, callerName);
+      return;
+    }
     if (type == 'incoming_call') {
       final callId = data['call_id'] as String? ?? '';
       final callerNumber = data['caller_number'] as String? ?? '';
@@ -185,7 +205,6 @@ class FCMService {
 @pragma('vm:entry-point')
 Future<void> _handleBackgroundMessage(RemoteMessage message) async {
   log('FCM: background message: ${message.data}');
-  if (message.data['type'] != 'incoming_call') return;
 
   try {
     await Firebase.initializeApp();
@@ -193,9 +212,20 @@ Future<void> _handleBackgroundMessage(RemoteMessage message) async {
     log('FCM: background Firebase init failed: $e');
   }
 
-  final callId = message.data['call_id'] as String? ?? '';
+  final type = message.data['type'] as String? ?? '';
   final callerNumber = message.data['caller_number'] as String? ?? '';
   final callerName = message.data['caller_name'] as String? ?? '';
+
+  if (type == 'voicemail') {
+    await CallNotifications.showVoicemail(
+      callerNumber: callerNumber,
+      callerName: callerName,
+    );
+    return;
+  }
+  if (type != 'incoming_call') return;
+
+  final callId = message.data['call_id'] as String? ?? '';
   if (callId.isEmpty) return;
 
   await CallNotifications.showIncomingCall(

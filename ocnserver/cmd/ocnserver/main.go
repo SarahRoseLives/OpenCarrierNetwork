@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/open-carrier-network/ocn/config"
 	"github.com/open-carrier-network/ocn/internal/admin"
@@ -23,6 +24,7 @@ import (
 	"github.com/open-carrier-network/ocn/internal/services"
 	"github.com/open-carrier-network/ocn/internal/signaling"
 	"github.com/open-carrier-network/ocn/internal/store"
+	"github.com/open-carrier-network/ocn/internal/voicemail"
 	ocnserverpb "github.com/open-carrier-network/ocn/proto/ocnserver"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -172,6 +174,20 @@ func main() {
 
 	// Initialize signaling server
 	sigServer := signaling.NewServer(db, authMgr, allocator, areaCode, serviceRegistry, pusher)
+
+	// Voicemail: record + visual retrieval over the signaling socket.
+	{
+		maxDur := time.Duration(cfg.MaxVoicemailDuration) * time.Second
+		vm := voicemail.NewManager(db, tts, maxDur, true)
+		if err := vm.EnsureMasterSecret(); err != nil {
+			log.Printf("WARNING: voicemail master secret unavailable: %v", err)
+		} else {
+			vm.OnStored = sigServer.NotifyVoicemailStored
+			sigServer.SetVoicemail(vm)
+			log.Printf("Voicemail enabled (max %s/message)", maxDur)
+		}
+	}
+
 	if regClient != nil {
 		sigServer.SetRegistry(regClient)
 		// Fetch the registry's STUN/TURN servers to hand out to clients.

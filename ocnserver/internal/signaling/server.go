@@ -3,6 +3,7 @@ package signaling
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"github.com/open-carrier-network/ocn/internal/push"
 	"github.com/open-carrier-network/ocn/internal/services"
 	"github.com/open-carrier-network/ocn/internal/store"
+	"github.com/open-carrier-network/ocn/internal/voicemail"
 	ocnserverpb "github.com/open-carrier-network/ocn/proto/ocnserver"
 	"github.com/pion/webrtc/v3"
 	"google.golang.org/grpc"
@@ -28,6 +30,10 @@ var upgrader = websocket.Upgrader{
 // pendingCallTimeout is how long an FCM-woken call stays queued for an offline
 // callee before the caller is told the call was not answered.
 const pendingCallTimeout = 45 * time.Second
+
+// ringTimeout is how long an online callee may ring before an unanswered call
+// is routed into their voicemail.
+const ringTimeout = 25 * time.Second
 
 type Client struct {
 	conn   *websocket.Conn
@@ -51,6 +57,14 @@ type Server struct {
 	netSvcs      map[string]services.Service // hosted 800/900 numbers
 	mu           sync.RWMutex
 
+	// Voicemail (nil when disabled/unconfigured)
+	vm *voicemail.Manager
+
+	// ringStates tracks calls that are ringing an online callee so a
+	// no-answer timer (or a decline/disconnect) can redirect to voicemail.
+	ringStates map[string]*ringState
+	ringMu     sync.Mutex
+
 	// Federation (registry + inter-server calls)
 	reg         registryClient // nil when standalone
 	insecureFed bool           // plaintext inter-server gRPC (dev)
@@ -58,6 +72,16 @@ type Server struct {
 	outLegs     map[string]*outLeg // callID -> this server is the caller, callee remote
 	inLegs      map[string]*inLeg  // callID -> this server hosts the callee, caller remote
 	fedMu       sync.RWMutex
+}
+
+// ringState is one in-progress ring toward an online local callee.
+type ringState struct {
+	caller     *Client
+	callee     *Client
+	calleeUser *store.User
+	offer      *SDPSession
+	timer      *time.Timer
+	answered   bool
 }
 
 // pendingCall is a call to a callee that was offline. We store it so that when
@@ -95,6 +119,7 @@ func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, ar
 		svcCalls:     make(map[string]*serviceCall),
 		pendingCalls: make(map[string]*pendingCall),
 		pusher:       pusher,
+		ringStates:   make(map[string]*ringState),
 		gConns:       make(map[string]*grpc.ClientConn),
 		outLegs:      make(map[string]*outLeg),
 		inLegs:       make(map[string]*inLeg),
@@ -102,6 +127,19 @@ func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, ar
 	}
 	go srv.expirePendingCalls()
 	return srv
+}
+
+// SetVoicemail attaches (or detaches, with nil) the voicemail manager.
+func (srv *Server) SetVoicemail(vm *voicemail.Manager) {
+	srv.mu.Lock()
+	srv.vm = vm
+	srv.mu.Unlock()
+}
+
+func (srv *Server) voicemailManager() *voicemail.Manager {
+	srv.mu.RLock()
+	defer srv.mu.RUnlock()
+	return srv.vm
 }
 
 // SetRegistry attaches a registry client so cross-server calls can be routed.
@@ -255,10 +293,21 @@ func (srv *Server) handleMessage(client *Client, msg *ClientMessage) {
 	case msg.CallHangup != nil:
 		log.Printf("Received call_hangup for %s", msg.CallHangup.CallID)
 		srv.handleCallHangup(client, msg.CallHangup)
+	case msg.CallDecline != nil:
+		log.Printf("Received call_decline for %s", msg.CallDecline.CallID)
+		srv.handleCallDecline(client, msg.CallDecline)
 	case msg.ICECandidate != nil:
 		srv.handleICECandidate(client, msg.ICECandidate)
 	case msg.Ping != nil:
 		srv.sendMessage(client, &ServerMessage{Pong: &Pong{}})
+	case msg.VoicemailList != nil:
+		srv.handleVoicemailList(client)
+	case msg.VoicemailGet != nil:
+		srv.handleVoicemailGet(client, msg.VoicemailGet)
+	case msg.VoicemailDelete != nil:
+		srv.handleVoicemailDelete(client, msg.VoicemailDelete)
+	case msg.VoicemailMarkRead != nil:
+		srv.handleVoicemailMarkRead(client, msg.VoicemailMarkRead)
 	default:
 		log.Printf("Received unknown message type")
 		srv.sendError(client, 400, "unknown message type")
@@ -450,15 +499,23 @@ func (srv *Server) handleCall(client *Client, msg *CallRequest) {
 	log.Printf("Callee %s online: %v", localNum, online)
 
 	if !online {
-		// Try FCM push notification
 		callee, err := srv.store.GetUserByNumber(localNum)
-		if err != nil || callee == nil || callee.FCMToken == "" {
+		if err != nil {
+			log.Printf("GetUserByNumber error: %v", err)
+			srv.sendError(client, 500, "database error")
+			return
+		}
+		if callee == nil {
 			srv.sendError(client, 404, "user not online")
 			return
 		}
 
 		pusher := srv.pushSender()
-		if pusher == nil {
+		if pusher == nil || callee.FCMToken == "" {
+			// Unreachable line: offer voicemail when enabled.
+			if srv.routeToVoicemail(client, callee, msg.Offer, "") {
+				return
+			}
 			srv.sendError(client, 404, "user not online")
 			return
 		}
@@ -487,6 +544,10 @@ func (srv *Server) handleCall(client *Client, msg *CallRequest) {
 		); err != nil {
 			log.Printf("FCM push failed: %v", err)
 			srv.removePendingByCallID(callID)
+			srv.clearCallID(client, callID)
+			if srv.routeToVoicemail(client, callee, msg.Offer, "") {
+				return
+			}
 			srv.sendError(client, 404, "user not online")
 			return
 		}
@@ -523,6 +584,8 @@ func (srv *Server) handleCall(client *Client, msg *CallRequest) {
 	srv.sendMessage(client, &ServerMessage{
 		CallRinging: &CallRinging{CallID: callID},
 	})
+
+	srv.startRing(callID, client, calleeClient, msg.Offer)
 
 	log.Printf("Call %s established between %s and %s", callID, client.user.Number, localNum)
 }
@@ -605,6 +668,9 @@ func (srv *Server) handleCallAnswer(client *Client, msg *CallAnswer) {
 
 	log.Printf("Call answer from %s for call %s", client.user.Number, msg.CallID)
 
+	// A ring timer may be pending toward this callee — the answer cancels it.
+	srv.takeRing(msg.CallID)
+
 	// Cross-server inbound: forward the answer to the remote caller.
 	srv.fedMu.Lock()
 	leg := srv.inLegs[msg.CallID]
@@ -666,6 +732,23 @@ func (srv *Server) handleCallHangup(client *Client, msg *CallHangup) {
 
 	if callID == "" {
 		log.Printf("No active call to hangup for %s", client.user.Number)
+		return
+	}
+
+	// A ring toward an online callee: the caller hanging up cancels it; the
+	// callee hanging up while still ringing (legacy clients) counts as a
+	// decline and routes the caller into voicemail.
+	if rs := srv.takeRing(callID); rs != nil {
+		if rs.callee == client {
+			if srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, "") {
+				log.Printf("Call %s declined; caller routed to voicemail", callID)
+				return
+			}
+			srv.endForClient(rs.caller, callID, "declined")
+			return
+		}
+		srv.clearCallID(rs.callee, callID)
+		srv.sendMessage(rs.callee, &ServerMessage{CallEnded: &CallEnded{CallID: callID, Reason: "hangup"}})
 		return
 	}
 
@@ -773,6 +856,313 @@ func (srv *Server) handleICECandidate(client *Client, msg *ICECandidateTrickle) 
 		c.mu.Unlock()
 	}
 	srv.mu.RUnlock()
+}
+
+func (srv *Server) handleCallDecline(client *Client, msg *CallDecline) {
+	if client.user == nil {
+		return
+	}
+	log.Printf("Decline from %s for call %s", client.user.Number, msg.CallID)
+
+	client.mu.Lock()
+	callID := client.callID
+	if msg.CallID != "" {
+		callID = msg.CallID
+	}
+	client.mu.Unlock()
+	if callID == "" {
+		return
+	}
+
+	rs := srv.takeRing(callID)
+	if rs == nil || rs.callee != client {
+		// Not a tracked ring — behave like a hangup.
+		srv.handleCallHangup(client, &CallHangup{CallID: msg.CallID})
+		return
+	}
+	srv.clearCallID(client, callID)
+	if srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, "") {
+		log.Printf("Call %s declined; caller routed to voicemail", callID)
+		return
+	}
+	srv.endForClient(rs.caller, callID, "declined")
+}
+
+// ---- Ring management ----
+
+func (srv *Server) startRing(callID string, caller, callee *Client, offer *SDPSession) {
+	rs := &ringState{caller: caller, callee: callee, calleeUser: callee.user, offer: offer}
+	srv.ringMu.Lock()
+	rs.timer = time.AfterFunc(ringTimeout, func() { srv.onRingTimeout(callID) })
+	srv.ringStates[callID] = rs
+	srv.ringMu.Unlock()
+}
+
+// takeRing removes and stops any ring state for callID.
+func (srv *Server) takeRing(callID string) *ringState {
+	srv.ringMu.Lock()
+	defer srv.ringMu.Unlock()
+	if rs := srv.ringStates[callID]; rs != nil {
+		if rs.timer != nil {
+			rs.timer.Stop()
+		}
+		delete(srv.ringStates, callID)
+		return rs
+	}
+	return nil
+}
+
+func (srv *Server) onRingTimeout(callID string) {
+	srv.ringMu.Lock()
+	rs := srv.ringStates[callID]
+	if rs == nil {
+		srv.ringMu.Unlock()
+		return
+	}
+	delete(srv.ringStates, callID)
+	srv.ringMu.Unlock()
+
+	if rs.answered {
+		return
+	}
+	log.Printf("Call %s to %s rang out", callID, rs.calleeUser.Number)
+
+	// Stop the callee's ring.
+	srv.clearCallID(rs.callee, callID)
+	srv.sendMessage(rs.callee, &ServerMessage{CallEnded: &CallEnded{CallID: callID, Reason: "no answer"}})
+
+	if !srv.isOnline(rs.caller) {
+		return
+	}
+	if srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, "") {
+		return
+	}
+	srv.endForClient(rs.caller, callID, "no answer")
+}
+
+func (srv *Server) clearCallID(client *Client, callID string) {
+	if client == nil {
+		return
+	}
+	client.mu.Lock()
+	if client.callID == callID {
+		client.callID = ""
+	}
+	client.mu.Unlock()
+}
+
+func (srv *Server) endForClient(client *Client, callID, reason string) {
+	if client == nil {
+		return
+	}
+	srv.clearCallID(client, callID)
+	srv.sendMessage(client, &ServerMessage{CallEnded: &CallEnded{CallID: callID, Reason: reason}})
+}
+
+// ---- Voicemail ----
+
+// routeToVoicemail answers caller with a recording session addressed to
+// recipient. Returns false when voicemail isn't available (disabled, recipient
+// unknown, or the call setup failed), in which case the caller should be told
+// the call could not be completed normally.
+func (srv *Server) routeToVoicemail(caller *Client, recipient *store.User, offer *SDPSession, reuseCallID string) bool {
+	vm := srv.voicemailManager()
+	if vm == nil || !vm.Enabled() || recipient == nil || offer == nil || !srv.isOnline(caller) {
+		return false
+	}
+
+	callID := reuseCallID
+	if callID == "" {
+		callID = generateCallID()
+	}
+
+	lv := voicemail.NewLeaveService(
+		vm,
+		recipient,
+		canonicalNumber(caller.user.AreaCode, caller.user.Number),
+		caller.user.DisplayName,
+	)
+	lv.OnSelfEnd = func(id string) {
+		srv.endServiceCall(caller, id, "voicemail complete")
+	}
+
+	webrtcOffer := &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer.SDP}
+	answer, err := lv.HandleCall(callID, webrtcOffer, srv.makeSendICE(caller, callID))
+	if err != nil {
+		log.Printf("voicemail: failed to answer caller %s: %v", caller.user.Number, err)
+		return false
+	}
+
+	srv.mu.Lock()
+	srv.svcCalls[callID] = &serviceCall{client: caller, service: lv}
+	caller.callID = callID
+	srv.mu.Unlock()
+
+	srv.sendMessage(caller, &ServerMessage{
+		CallConnected: &CallConnected{
+			CallID: callID,
+			Answer: &SDPSession{SDP: answer.SDP, Type: "answer"},
+			Service: &ServiceInfo{
+				Code: "vm",
+				Name: "Voicemail",
+			},
+		},
+	})
+	log.Printf("voicemail: caller %s recording for %s (call %s)", caller.user.Number, recipient.Number, callID)
+	return true
+}
+
+// makeSendICE returns a closure that relays a service's ICE candidate to
+// client for callID (used by voicemail + service calls).
+func (srv *Server) makeSendICE(client *Client, callID string) func(webrtc.ICECandidateInit) {
+	return func(candidate webrtc.ICECandidateInit) {
+		var mid string
+		if candidate.SDPMid != nil {
+			mid = *candidate.SDPMid
+		}
+		var mline int32
+		if candidate.SDPMLineIndex != nil {
+			mline = int32(*candidate.SDPMLineIndex)
+		}
+		srv.sendMessage(client, &ServerMessage{
+			ICECandidate: &ICECandidateTrickle{
+				CallID: callID,
+				Candidate: &ICECandidate{
+					Candidate:     candidate.Candidate,
+					SDPMid:        mid,
+					SDPMLineIndex: mline,
+				},
+			},
+		})
+	}
+}
+
+// endServiceCall tears down a service call for a client and notifies them.
+func (srv *Server) endServiceCall(caller *Client, callID, reason string) {
+	srv.mu.Lock()
+	sc, ok := srv.svcCalls[callID]
+	if ok {
+		delete(srv.svcCalls, callID)
+	}
+	srv.mu.Unlock()
+	if caller != nil {
+		srv.clearCallID(caller, callID)
+		srv.sendMessage(caller, &ServerMessage{CallEnded: &CallEnded{CallID: callID, Reason: reason}})
+	}
+	if ok && sc != nil && sc.service != nil {
+		_ = sc.service.EndCall(callID)
+	}
+}
+
+func (srv *Server) handleVoicemailList(client *Client) {
+	if client.user == nil {
+		return
+	}
+	meta, err := srv.store.ListVoicemailMeta(client.user.Number)
+	if err != nil {
+		log.Printf("voicemail list error: %v", err)
+		srv.sendError(client, 500, "failed to list voicemail")
+		return
+	}
+	unread, _ := srv.store.CountUnlistened(client.user.Number)
+	msgs := make([]VoicemailInfo, 0, len(meta))
+	for _, m := range meta {
+		msgs = append(msgs, VoicemailInfo{
+			ID:              m.ID,
+			CallerNumber:    m.CallerNumber,
+			CallerName:      m.CallerName,
+			DurationSeconds: m.DurationSeconds,
+			Listened:        m.Listened,
+			CreatedAt:       m.CreatedAt.Unix(),
+		})
+	}
+	srv.sendMessage(client, &ServerMessage{
+		VoicemailListResponse: &VoicemailListResponse{Messages: msgs, Unread: unread},
+	})
+}
+
+func (srv *Server) handleVoicemailGet(client *Client, req *VoicemailGetReq) {
+	if client.user == nil || req == nil {
+		return
+	}
+	vm := srv.voicemailManager()
+	if vm == nil || !vm.Enabled() {
+		srv.sendError(client, 503, "voicemail unavailable")
+		return
+	}
+	msg, err := srv.store.GetVoicemail(req.ID, client.user.Number)
+	if err != nil || msg == nil {
+		srv.sendError(client, 404, "voicemail not found")
+		return
+	}
+	ogg, err := vm.RenderOgg(client.user.Number, msg)
+	if err != nil {
+		log.Printf("voicemail render error: %v", err)
+		srv.sendError(client, 500, "failed to load voicemail")
+		return
+	}
+	srv.sendMessage(client, &ServerMessage{
+		VoicemailGetResponse: &VoicemailGetResponse{
+			ID:          msg.ID,
+			AudioBase64: base64.StdEncoding.EncodeToString(ogg),
+		},
+	})
+}
+
+func (srv *Server) handleVoicemailDelete(client *Client, req *VoicemailDeleteReq) {
+	if client.user == nil || req == nil {
+		return
+	}
+	if err := srv.store.DeleteVoicemail(req.ID, client.user.Number); err != nil {
+		log.Printf("voicemail delete error: %v", err)
+	}
+}
+
+func (srv *Server) handleVoicemailMarkRead(client *Client, req *VoicemailMarkReadReq) {
+	if client.user == nil || req == nil {
+		return
+	}
+	if err := srv.store.MarkListened(req.ID, client.user.Number); err != nil {
+		log.Printf("voicemail mark read error: %v", err)
+	}
+}
+
+// NotifyVoicemailStored tells a recipient about a new message: a WS event when
+// they are online, otherwise an FCM push. Used as the voicemail Manager hook.
+func (srv *Server) NotifyVoicemailStored(recipientNumber, callerNumber, callerName string) {
+	unread, _ := srv.store.CountUnlistened(recipientNumber)
+	srv.mu.RLock()
+	c, online := srv.clients[recipientNumber]
+	srv.mu.RUnlock()
+	if online && c != nil {
+		srv.sendMessage(c, &ServerMessage{
+			VoicemailEvent: &VoicemailEvent{
+				Action:       "new",
+				CallerNumber: callerNumber,
+				CallerName:   callerName,
+				Unread:       unread,
+			},
+		})
+		return
+	}
+	u, err := srv.store.GetUserByNumber(recipientNumber)
+	if err != nil || u == nil || u.FCMToken == "" {
+		return
+	}
+	p := srv.pushSender()
+	if p == nil {
+		return
+	}
+	if err := p.SendVoicemailNotification(u.FCMToken, callerNumber, callerName); err != nil {
+		log.Printf("voicemail push failed for %s: %v", recipientNumber, err)
+	}
+}
+
+func canonicalNumber(area, number string) string {
+	if area == "" {
+		return number
+	}
+	return area + number
 }
 
 func (srv *Server) isOnline(client *Client) bool {
@@ -885,21 +1275,26 @@ func (srv *Server) closeLocalLeg(client *Client, callID, reason string) bool {
 }
 
 func (srv *Server) expirePendingCalls() {
+	type expiredCall struct {
+		num string
+		p   *pendingCall
+	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		var expired []*pendingCall
+		var expired []expiredCall
 		srv.mu.Lock()
 		for num, p := range srv.pendingCalls {
 			if time.Since(p.createdAt) > pendingCallTimeout {
-				expired = append(expired, p)
+				expired = append(expired, expiredCall{num: num, p: p})
 				delete(srv.pendingCalls, num)
 			}
 		}
 		srv.mu.Unlock()
 
-		for _, p := range expired {
-			log.Printf("Pending call %s expired (no answer)", p.callID)
+		for _, ec := range expired {
+			p := ec.p
+			log.Printf("Pending call %s to %s expired (no answer)", p.callID, ec.num)
 			if p.remote {
 				// Notify the remote caller and drop the leg.
 				srv.fedMu.Lock()
@@ -916,9 +1311,11 @@ func (srv *Server) expirePendingCalls() {
 				continue
 			}
 			if srv.isOnline(p.caller) {
-				p.caller.mu.Lock()
-				p.caller.callID = ""
-				p.caller.mu.Unlock()
+				recipient, _ := srv.store.GetUserByNumber(ec.num)
+				if srv.routeToVoicemail(p.caller, recipient, p.offer, "") {
+					continue
+				}
+				srv.clearCallID(p.caller, p.callID)
 				srv.sendMessage(p.caller, &ServerMessage{
 					CallEnded: &CallEnded{CallID: p.callID, Reason: "no answer"},
 				})
@@ -955,6 +1352,32 @@ func (srv *Server) unregisterClient(client *Client) {
 
 		// If the caller disconnects while the call is still pending, drop it.
 		srv.removePendingByCallID(callID)
+
+		// Ring toward an online callee: a disconnecting callee lets the caller
+		// reach voicemail; a disconnecting caller cancels the ring.
+		if rs := srv.takeRing(callID); rs != nil {
+			if rs.callee == client {
+				if srv.isOnline(rs.caller) {
+					if !srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, "") {
+						srv.endForClient(rs.caller, callID, "disconnect")
+					}
+				}
+			} else if rs.caller == client {
+				srv.clearCallID(rs.callee, callID)
+				srv.sendMessage(rs.callee, &ServerMessage{CallEnded: &CallEnded{CallID: callID, Reason: "disconnect"}})
+			}
+		}
+
+		// Tear down any service session this client was in (e.g. voicemail).
+		srv.mu.Lock()
+		sc, isSvc := srv.svcCalls[callID]
+		if isSvc && sc.client == client {
+			delete(srv.svcCalls, callID)
+		}
+		srv.mu.Unlock()
+		if isSvc && sc.client == client && sc.service != nil {
+			_ = sc.service.EndCall(callID)
+		}
 
 		srv.mu.RLock()
 		for _, c := range srv.clients {

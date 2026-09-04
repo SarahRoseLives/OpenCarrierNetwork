@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:developer';
+import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -69,8 +71,11 @@ class AppState extends ChangeNotifier {
 
   final ContactStore _contacts = ContactStore();
   final CallHistoryStore _history = CallHistoryStore();
+  final VoicemailStore _voicemail = VoicemailStore();
   bool _phoneDataLoaded = false;
   static int _idCounter = 0;
+
+  final Map<String, Completer<Uint8List>> _audioWaiters = {};
 
   final SignalingClient _signaling;
   final WebRTCManager _webrtc = WebRTCManager();
@@ -103,6 +108,69 @@ class AppState extends ChangeNotifier {
   List<Contact> get contacts => _contacts.items;
   List<CallLogEntry> get callHistory => _history.items;
 
+  // ---- Voicemail ----
+
+  List<VoicemailMessage> get voicemail {
+    final items = [..._voicemail.items]
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return List.unmodifiable(items);
+  }
+
+  int get voicemailUnread => _voicemail.unread;
+
+  Future<void> refreshVoicemail() async {
+    await _ensurePhoneData();
+    if (_signaling.isConnected) {
+      _signaling.voicemailList();
+    }
+  }
+
+  Future<Uint8List> fetchVoicemailAudio(String id) async {
+    final completer = Completer<Uint8List>();
+    _audioWaiters[id] = completer;
+    _signaling.voicemailGet(id);
+    try {
+      return await completer.future.timeout(const Duration(seconds: 20));
+    } finally {
+      _audioWaiters.remove(id);
+    }
+  }
+
+  Future<void> deleteVoicemail(String id) async {
+    await _ensurePhoneData();
+    _voicemail.remove(id);
+    await _voicemail.persist();
+    _signaling.voicemailDelete(id);
+    notifyListeners();
+  }
+
+  Future<void> markVoicemailRead(String id) async {
+    await _ensurePhoneData();
+    _voicemail.markRead(id);
+    await _voicemail.persist();
+    _signaling.voicemailMarkRead(id);
+    notifyListeners();
+  }
+
+  void _onVoicemailList(List<VoicemailMessage> messages, int unread) {
+    _voicemail.replaceAll(messages);
+    _voicemail.persist();
+    log('AppState: voicemail list updated (${messages.length}, $unread unread)');
+    notifyListeners();
+  }
+
+  void _onVoicemailAudio(String id, Uint8List bytes) {
+    final c = _audioWaiters.remove(id);
+    if (c != null && !c.isCompleted) c.complete(bytes);
+  }
+
+  void _onVoicemailEvent(String callerNumber, String callerName, int unread) {
+    log('AppState: voicemail event ($callerNumber) unread=$unread');
+    // Refresh authoritative list from the server.
+    _signaling.voicemailList();
+    notifyListeners();
+  }
+
   /// Contact matching [numberText] (dialed or caller number), or null.
   Contact? contactForNumber(String numberText) {
     final canon = canonicalNumber(numberText, ownArea: _ownArea);
@@ -115,8 +183,9 @@ class AppState extends ChangeNotifier {
     _phoneDataLoaded = true;
     await _contacts.ensureLoaded();
     await _history.ensureLoaded();
+    await _voicemail.ensureLoaded();
     log('AppState: phonebook loaded '
-        '(${contacts.length} contacts, ${callHistory.length} calls)');
+        '(${contacts.length} contacts, ${callHistory.length} calls, ${voicemail.length} voicemails)');
     notifyListeners();
   }
 
@@ -437,6 +506,9 @@ class AppState extends ChangeNotifier {
         );
         log('kSIM saved to database');
       }
+
+      // Fetch the mailbox (if any) now that we're registered.
+      refreshVoicemail();
     };
 
     _signaling.onIncomingCall = (callId, caller, callerName, sdp) {
@@ -548,6 +620,14 @@ class AppState extends ChangeNotifier {
     };
 
     _signaling.onError = (code, message) {
+      // An older server replies "unknown message type" to messages it doesn't
+      // know (e.g. voicemail). Treat that as "feature unsupported", not a
+      // user-facing failure.
+      if (message.contains('unknown message type') ||
+          message.contains('invalid message type')) {
+        log('AppState: ignoring unsupported-message error: $message');
+        return;
+      }
       log('AppState: error $code $message');
       if (status == AppStatus.connecting) {
         status = AppStatus.error;
@@ -557,6 +637,10 @@ class AppState extends ChangeNotifier {
       }
       notifyListeners();
     };
+
+    _signaling.onVoicemailList = _onVoicemailList;
+    _signaling.onVoicemailAudio = _onVoicemailAudio;
+    _signaling.onVoicemailEvent = _onVoicemailEvent;
   }
 
   Future<void> makeCall(String destination) async {
@@ -714,7 +798,9 @@ class AppState extends ChangeNotifier {
 
   void declineCall() {
     if (activeCall != null && activeCall!.isIncoming) {
-      _signaling.hangup(activeCall!.callId);
+      log('Declining call ${activeCall!.callId}');
+      // Tell the server to route the caller into our voicemail.
+      _signaling.decline(activeCall!.callId);
       _cleanupCall(declined: true);
       notifyListeners();
     }

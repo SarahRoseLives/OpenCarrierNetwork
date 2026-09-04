@@ -4,7 +4,10 @@
 // satisfy Sender structurally.
 package push
 
-// Sender wakes an offline device with an "incoming call" data message.
+// Sender wakes an offline device with a data message.
 type Sender interface {
 	SendCallNotification(token, callID, callerNumber, callerName string) error
+	// SendVoicemailNotification notifies a device that a new voicemail is
+	// waiting from callerNumber/callerName.
+	SendVoicemailNotification(token, callerNumber, callerName string) error
 }

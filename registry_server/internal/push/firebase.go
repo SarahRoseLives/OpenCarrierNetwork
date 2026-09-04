@@ -72,6 +72,31 @@ func (c *Client) SendCallNotification(token, callID, callerNumber, callerName st
 	return nil
 }
 
+// SendVoicemailNotification sends the "new voicemail" data message the OCN
+// phone app understands.
+func (c *Client) SendVoicemailNotification(token, callerNumber, callerName string) error {
+	if c == nil || c.messaging == nil {
+		return fmt.Errorf("push client not initialized")
+	}
+	msg := &messaging.Message{
+		Token: token,
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+		},
+		Data: map[string]string{
+			"type":          "voicemail",
+			"caller_number": callerNumber,
+			"caller_name":   callerName,
+		},
+	}
+	_, err := c.messaging.Send(context.Background(), msg)
+	if err != nil {
+		return fmt.Errorf("send fcm voicemail message: %w", err)
+	}
+	log.Printf("Registry voicemail push sent to token %s...", truncate(token, 16))
+	return nil
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s

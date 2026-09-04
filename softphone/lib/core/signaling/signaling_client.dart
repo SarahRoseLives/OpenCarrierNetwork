@@ -4,6 +4,7 @@ import 'dart:developer' as dev;
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import '../db/db.dart';
 import '../ksim/ksim_keypair.dart';
 
 class OcnPhoneNumber {
@@ -67,6 +68,11 @@ class SignalingClient {
   onICECandidate;
   Function(int code, String message)? onError;
   Function(OcnConnectionState state)? onConnectionState;
+
+  // Voicemail
+  Function(List<VoicemailMessage> messages, int unread)? onVoicemailList;
+  Function(String id, Uint8List oggBytes)? onVoicemailAudio;
+  Function(String callerNumber, String callerName, int unread)? onVoicemailEvent;
 
   // Internal state for reconnection
   OcnConnectionState _state = OcnConnectionState.disconnected;
@@ -308,6 +314,23 @@ class SignalingClient {
       dev.log('Error from server: ${err['code']} ${err['message']}');
       onError?.call(err['code'] as int, err['message'] as String);
       _challengeCompleter?.completeError(err['message'] as String);
+    } else if (json.containsKey('voicemail_list_response')) {
+      final v = json['voicemail_list_response'] as Map<String, dynamic>;
+      final messages = (v['messages'] as List<dynamic>? ?? [])
+          .map((e) => VoicemailMessage.fromJson((e as Map).cast<String, dynamic>()))
+          .toList();
+      onVoicemailList?.call(messages, v['unread'] as int? ?? 0);
+    } else if (json.containsKey('voicemail_get_response')) {
+      final v = json['voicemail_get_response'] as Map<String, dynamic>;
+      final b64 = v['audio_b64'] as String? ?? '';
+      onVoicemailAudio?.call(v['id'] as String, base64Decode(b64));
+    } else if (json.containsKey('voicemail_event')) {
+      final v = json['voicemail_event'] as Map<String, dynamic>;
+      onVoicemailEvent?.call(
+        v['caller_number'] as String? ?? '',
+        v['caller_name'] as String? ?? '',
+        v['unread'] as int? ?? 0,
+      );
     }
   }
 
@@ -439,6 +462,14 @@ class SignalingClient {
     });
   }
 
+  /// Explicitly decline an incoming call so the server routes the caller to
+  /// voicemail rather than just ending the call.
+  void decline(String callId) {
+    _send({
+      'call_decline': {'call_id': callId},
+    });
+  }
+
   void sendICECandidate(
     String callId,
     String candidate,
@@ -461,6 +492,24 @@ class SignalingClient {
     _send({
       'register_fcm': {'token': token},
     });
+  }
+
+  // ---- Voicemail ----
+
+  void voicemailList() {
+    _send({'voicemail_list': <String, dynamic>{}});
+  }
+
+  void voicemailGet(String id) {
+    _send({'voicemail_get': {'id': id}});
+  }
+
+  void voicemailDelete(String id) {
+    _send({'voicemail_delete': {'id': id}});
+  }
+
+  void voicemailMarkRead(String id) {
+    _send({'voicemail_mark_read': {'id': id}});
   }
 
   void ping() {

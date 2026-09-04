@@ -30,9 +30,10 @@ type PushDeviceRequest struct {
 	CallId        string                 `protobuf:"bytes,2,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"`
 	CallerNumber  string                 `protobuf:"bytes,3,opt,name=caller_number,json=callerNumber,proto3" json:"caller_number,omitempty"` // 7-digit or full? formatted number string
 	CallerName    string                 `protobuf:"bytes,4,opt,name=caller_name,json=callerName,proto3" json:"caller_name,omitempty"`
-	AreaCode      string                 `protobuf:"bytes,5,opt,name=area_code,json=areaCode,proto3" json:"area_code,omitempty"` // sending server's area code (for auth/audit)
-	Timestamp     int64                  `protobuf:"varint,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`              // unix seconds; signed by the calling server
-	Signature     []byte                 `protobuf:"bytes,7,opt,name=signature,proto3" json:"signature,omitempty"`               // Ed25519 over area_code|timestamp|token
+	AreaCode      string                 `protobuf:"bytes,5,opt,name=area_code,json=areaCode,proto3" json:"area_code,omitempty"`          // sending server's area code (for auth/audit)
+	Timestamp     int64                  `protobuf:"varint,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`                       // unix seconds; signed by the calling server
+	Signature     []byte                 `protobuf:"bytes,7,opt,name=signature,proto3" json:"signature,omitempty"`                        // Ed25519 over area_code|timestamp|token
+	MessageType   string                 `protobuf:"bytes,8,opt,name=message_type,json=messageType,proto3" json:"message_type,omitempty"` // "" = incoming_call (call_id required), "voicemail" = new voicemail
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -114,6 +115,13 @@ func (x *PushDeviceRequest) GetSignature() []byte {
 		return x.Signature
 	}
 	return nil
+}
+
+func (x *PushDeviceRequest) GetMessageType() string {
+	if x != nil {
+		return x.MessageType
+	}
+	return ""
 }
 
 // OCNServer registration
@@ -914,7 +922,7 @@ var File_registry_proto protoreflect.FileDescriptor
 
 const file_registry_proto_rawDesc = "" +
 	"\n" +
-	"\x0eregistry.proto\x12\focn.registry\x1a\fcommon.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xe1\x01\n" +
+	"\x0eregistry.proto\x12\focn.registry\x1a\fcommon.proto\x1a\x1bgoogle/protobuf/empty.proto\"\x84\x02\n" +
 	"\x11PushDeviceRequest\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12\x17\n" +
 	"\acall_id\x18\x02 \x01(\tR\x06callId\x12#\n" +
@@ -923,7 +931,8 @@ const file_registry_proto_rawDesc = "" +
 	"callerName\x12\x1b\n" +
 	"\tarea_code\x18\x05 \x01(\tR\bareaCode\x12\x1c\n" +
 	"\ttimestamp\x18\x06 \x01(\x03R\ttimestamp\x12\x1c\n" +
-	"\tsignature\x18\a \x01(\fR\tsignature\"\xd9\x01\n" +
+	"\tsignature\x18\a \x01(\fR\tsignature\x12!\n" +
+	"\fmessage_type\x18\b \x01(\tR\vmessageType\"\xd9\x01\n" +
 	"\x18RegisterOCNServerRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12%\n" +

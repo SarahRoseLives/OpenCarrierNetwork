@@ -9,6 +9,7 @@ import 'features/contacts/contacts_screen.dart';
 import 'features/dialer/dialer_screen.dart';
 import 'features/history/history_screen.dart';
 import 'features/registration/registration_screen.dart';
+import 'features/voicemail/voicemail_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,6 +59,10 @@ class _OcnSoftphoneAppState extends State<OcnSoftphoneApp> {
         // FCM woke us up for a call — reconnect now so the server delivers
         // the queued call over the WebSocket.
         _appState.wakeForIncomingCall();
+      },
+      onVoicemail: (callerNumber, callerName) {
+        log('FCM: voicemail notification for $callerNumber ($callerName) — refreshing');
+        _appState.refreshVoicemail();
       },
       onToken: (t) {
         _appState.setFCMToken(t);
@@ -155,6 +160,7 @@ class _MainAppState extends State<MainApp> {
           DialerScreen(),
           HistoryScreen(),
           ContactsScreen(),
+          VoicemailScreen(),
           SettingsScreen(),
         ],
       ),
@@ -163,11 +169,19 @@ class _MainAppState extends State<MainApp> {
         onDestinationSelected: (index) {
           setState(() => _currentIndex = index);
         },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.dialpad), label: 'Dialer'),
-          NavigationDestination(icon: Icon(Icons.history), label: 'History'),
-          NavigationDestination(icon: Icon(Icons.contacts), label: 'Contacts'),
-          NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
+        destinations: [
+          const NavigationDestination(icon: Icon(Icons.dialpad), label: 'Dialer'),
+          const NavigationDestination(icon: Icon(Icons.history), label: 'History'),
+          const NavigationDestination(icon: Icon(Icons.contacts), label: 'Contacts'),
+          NavigationDestination(
+            icon: Badge(
+              isLabelVisible: appState.voicemailUnread > 0,
+              label: Text('${appState.voicemailUnread}'),
+              child: const Icon(Icons.voicemail),
+            ),
+            label: 'Voicemail',
+          ),
+          const NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
         ],
       ),
     );

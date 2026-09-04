@@ -88,6 +88,45 @@ func (s *Store) ListVoicemails(recipientNumber string) ([]*Voicemail, error) {
 	return voicemails, nil
 }
 
+// VoicemailMeta is a voicemail without the audio blob, for list views.
+type VoicemailMeta struct {
+	ID              string
+	CallerNumber    string
+	CallerName      string
+	RecipientNumber string
+	Format          string
+	DurationSeconds int32
+	Listened        bool
+	CreatedAt       time.Time
+}
+
+// ListVoicemailMeta lists a recipient's messages newest first without audio.
+func (s *Store) ListVoicemailMeta(recipientNumber string) ([]*VoicemailMeta, error) {
+	rows, err := s.db.Query(
+		`SELECT id, caller_number, caller_name, recipient_number, format, duration_seconds, listened, created_at
+		 FROM voicemail WHERE recipient_number = ? ORDER BY created_at DESC`, recipientNumber,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*VoicemailMeta
+	for rows.Next() {
+		var v VoicemailMeta
+		var listened int
+		var createdAt int64
+		if err := rows.Scan(&v.ID, &v.CallerNumber, &v.CallerName, &v.RecipientNumber,
+			&v.Format, &v.DurationSeconds, &listened, &createdAt); err != nil {
+			return nil, err
+		}
+		v.Listened = listened != 0
+		v.CreatedAt = time.Unix(createdAt, 0)
+		out = append(out, &v)
+	}
+	return out, nil
+}
+
 // MarkListened marks a voicemail as listened
 func (s *Store) MarkListened(id, recipientNumber string) error {
 	_, err := s.db.Exec(

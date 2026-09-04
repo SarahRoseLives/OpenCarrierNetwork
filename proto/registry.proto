@@ -34,6 +34,7 @@ message PushDeviceRequest {
   string area_code = 5;      // sending server's area code (for auth/audit)
   int64 timestamp = 6;       // unix seconds; signed by the calling server
   bytes signature = 7;       // Ed25519 over area_code|timestamp|token
+  string message_type = 8;   // "" = incoming_call (call_id required), "voicemail" = new voicemail
 }
 
 // OCNServer registration

@@ -159,6 +159,34 @@ func (c *Client) SendCallNotification(token, callID, callerNumber, callerName st
 	return nil
 }
 
+// SendVoicemailNotification satisfies push.Sender by relaying a voicemail
+// data push through the registry's shared Firebase project.
+func (c *Client) SendVoicemailNotification(token, callerNumber, callerName string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if c.area == "" || c.key == nil {
+		return fmt.Errorf("registry push: server area/identity not set")
+	}
+	ts := time.Now().Unix()
+	_, err := c.pb.PushDevice(ctx, &registrypb.PushDeviceRequest{
+		Token:        token,
+		CallerNumber: callerNumber,
+		CallerName:   callerName,
+		AreaCode:     c.area,
+		Timestamp:    ts,
+		Signature:    c.sign(ts),
+		MessageType:  "voicemail",
+	})
+	if err != nil {
+		if s, ok := status.FromError(err); ok {
+			return fmt.Errorf("registry push: %s", s.Message())
+		}
+		return fmt.Errorf("registry push: %w", err)
+	}
+	return nil
+}
+
 // sign produces the auth signature over area|timestamp.
 func (c *Client) sign(ts int64) []byte {
 	if c.key == nil {
