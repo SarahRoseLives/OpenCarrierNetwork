@@ -24,6 +24,10 @@ softphone/build/
 softphone/.dart_tool/
 softphone/.packages
 
+# Android signing secrets
+softphone/android/key.properties
+softphone/android/upload-keystore.jks
+
 # Go build
 ocnserver/ocnserver
 
