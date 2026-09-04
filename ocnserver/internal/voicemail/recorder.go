@@ -20,6 +20,7 @@ type LeaveService struct {
 	recipient  *store.User
 	callerNum  string // canonical caller number stored on the message
 	callerName string
+	ice        []webrtc.ICEServer // ICE/TURN servers for the media leg (fallback: Google STUN)
 	mu         sync.Mutex
 	calls      map[string]*leaveCall
 
@@ -45,13 +46,21 @@ func NewLeaveService(m *Manager, recipient *store.User, callerNumber, callerName
 	}
 }
 
+// SetICEServers configures the STUN/TURN servers used for the media leg so a
+// caller behind NAT can reach the recorder. Empty leaves the default STUN.
+func (l *LeaveService) SetICEServers(servers []webrtc.ICEServer) {
+	l.ice = servers
+}
+
 func (l *LeaveService) Code() string { return "voicemail" }
 func (l *LeaveService) Name() string { return "Voicemail" }
 
 func (l *LeaveService) HandleCall(callID string, offer *webrtc.SessionDescription, sendICE func(webrtc.ICECandidateInit)) (*webrtc.SessionDescription, error) {
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
-	})
+	ice := l.ice
+	if len(ice) == 0 {
+		ice = []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}}
+	}
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: ice})
 	if err != nil {
 		return nil, fmt.Errorf("voicemail: create peer: %w", err)
 	}
@@ -90,7 +99,12 @@ func (l *LeaveService) HandleCall(callID string, offer *webrtc.SessionDescriptio
 		sendICE(c.ToJSON())
 	})
 
+	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		log.Printf("voicemail: call %s ICE state -> %s", callID, state.String())
+	})
+
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		log.Printf("voicemail: call %s got inbound track (%s)", callID, remoteTrack.Codec().MimeType)
 		go l.runRecordSession(callID, call, remoteTrack)
 	})
 

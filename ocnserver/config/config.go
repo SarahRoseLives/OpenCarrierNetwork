@@ -22,6 +22,13 @@ type Config struct {
 	VoicemailPath        string `json:"voicemail_path"`
 	MaxVoicemailDuration int    `json:"max_voicemail_duration_seconds"`
 
+	// RingTimeoutSeconds is how long an online callee may ring before an
+	// unanswered/declined call is routed into voicemail.
+	RingTimeoutSeconds int `json:"ring_timeout_seconds,omitempty"`
+	// PendingCallTimeoutSeconds is how long an offline (pushed) callee's call
+	// may wait before it is routed into voicemail.
+	PendingCallTimeoutSeconds int `json:"pending_call_timeout_seconds,omitempty"`
+
 	AdminHost     string `json:"admin_host,omitempty"`     // admin web panel bind host
 	AdminPort     int    `json:"admin_port,omitempty"`     // admin web panel port (default 8080)
 	PublicAddress string `json:"public_address,omitempty"` // e.g. "192.168.1.240:9100" used in provisioning QR/links
@@ -47,18 +54,20 @@ type ServiceNumberConfig struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		Host:                 "0.0.0.0",
-		Port:                 9100,
-		AreaCode:             "", // No area code until federated
-		ServerName:           "OCN Server",
-		Description:          "Default OCN server",
-		ServerKeyPath:        "server.key",
-		DatabasePath:         "ocnserver.db",
-		VoicemailPath:        "voicemail/",
-		MaxVoicemailDuration: 120,
-		AdminHost:            "0.0.0.0",
-		AdminPort:            8080,
-		FedAddr:              ":9110",
+		Host:                      "0.0.0.0",
+		Port:                      9100,
+		AreaCode:                  "", // No area code until federated
+		ServerName:                "OCN Server",
+		Description:               "Default OCN server",
+		ServerKeyPath:             "server.key",
+		DatabasePath:              "ocnserver.db",
+		VoicemailPath:             "voicemail/",
+		MaxVoicemailDuration:      120,
+		RingTimeoutSeconds:        15,
+		PendingCallTimeoutSeconds: 15,
+		AdminHost:                 "0.0.0.0",
+		AdminPort:                 8080,
+		FedAddr:                   ":9110",
 	}
 }
 

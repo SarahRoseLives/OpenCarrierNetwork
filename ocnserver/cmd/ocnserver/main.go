@@ -181,6 +181,12 @@ func main() {
 
 	// Initialize signaling server
 	sigServer := signaling.NewServer(db, authMgr, allocator, areaCode, serviceRegistry, pusher)
+	sigServer.SetCallTimeouts(
+		time.Duration(cfg.RingTimeoutSeconds)*time.Second,
+		time.Duration(cfg.PendingCallTimeoutSeconds)*time.Second,
+	)
+	log.Printf("Call timeouts: ring=%ds (online), pending=%ds (offline) before voicemail",
+		cfg.RingTimeoutSeconds, cfg.PendingCallTimeoutSeconds)
 
 	// Voicemail: record + visual retrieval over the signaling socket.
 	{

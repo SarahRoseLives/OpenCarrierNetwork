@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/open-carrier-network/ocn/internal/services"
+	"github.com/open-carrier-network/ocn/internal/voicemail"
 	commonpb "github.com/open-carrier-network/ocn/proto/common"
 	ocnserverpb "github.com/open-carrier-network/ocn/proto/ocnserver"
 	"github.com/pion/webrtc/v3"
@@ -24,7 +25,8 @@ type outLeg struct {
 
 // inLeg is an inbound cross-server leg: this server hosts the CALLEE and the
 // caller is on a remote server. callee is nil until the local user is online;
-// service is set when this is a hosted 800/900 network service.
+// service is set when this is a hosted 800/900 network service or the call has
+// been redirected to voicemail.
 type inLeg struct {
 	snd        func(ev *ocnserverpb.CallEvent) error
 	callee     *Client
@@ -32,7 +34,11 @@ type inLeg struct {
 	callerArea string
 	callerNum  string
 	callerName string
+	offer      *SDPSession // caller's offer; needed to answer voicemail later
 	service    services.Service
+	answered   bool                      // callee (or service) has answered
+	timer      *time.Timer               // online no-answer ring timer -> voicemail
+	candidates []webrtc.ICECandidateInit // caller's ICE candidates buffered during ring
 }
 
 // eventSender adapts a gRPC bridge stream's Send for the leg maps.
@@ -270,6 +276,10 @@ func (srv *Server) serveInbound(stream ocnserverpb.OCNServerService_BridgeCallSe
 		srv.fedMu.Lock()
 		for _, callID := range opened {
 			if leg, ok := srv.inLegs[callID]; ok {
+				if leg.timer != nil {
+					leg.timer.Stop()
+					leg.timer = nil
+				}
 				delete(srv.inLegs, callID)
 				if leg.service != nil {
 					_ = leg.service.EndCall(callID)
@@ -306,6 +316,12 @@ func (srv *Server) serveInbound(stream ocnserverpb.OCNServerService_BridgeCallSe
 		case ocnserverpb.CallEvent_ICE:
 			srv.fedMu.Lock()
 			leg := srv.inLegs[ev.CallId]
+			// Buffer the remote caller's candidates while the callee is still
+			// ringing, so they can be replayed into voicemail if the call is
+			// declined/times out (the recorder is a different media endpoint).
+			if leg != nil && leg.callee != nil && ev.Candidate != nil {
+				leg.candidates = append(leg.candidates, commonToICEInit(ev.Candidate))
+			}
 			srv.fedMu.Unlock()
 			if leg == nil || ev.Candidate == nil {
 				continue
@@ -354,6 +370,7 @@ func (srv *Server) inboundIncoming(stream ocnserverpb.OCNServerService_BridgeCal
 		callerArea: ev.CallerNumber.GetAreaCode(),
 		callerNum:  ev.CallerNumber.GetNumber(),
 		callerName: ev.CallerName.GetName(),
+		offer:      commonToSdp(ev.Sdp),
 	}
 
 	// Hosted 800/900 network service?
@@ -383,6 +400,12 @@ func (srv *Server) inboundIncoming(stream ocnserverpb.OCNServerService_BridgeCal
 		calleeClient.callID = callID
 		calleeClient.mu.Unlock()
 
+		// Ring the online callee; if they don't answer in time, redirect the
+		// remote caller into their voicemail.
+		srv.fedMu.Lock()
+		leg.timer = time.AfterFunc(srv.inboundRingDuration(), func() { srv.onInboundRingTimeout(callID) })
+		srv.fedMu.Unlock()
+
 		srv.sendMessage(calleeClient, &ServerMessage{
 			IncomingCall: &IncomingCall{
 				CallID: callID,
@@ -401,8 +424,18 @@ func (srv *Server) inboundIncoming(stream ocnserverpb.OCNServerService_BridgeCal
 
 	// Callee offline: queue + wake via the configured push sender.
 	callee, err := srv.store.GetUserByNumber(calleeNum)
+	if err != nil || callee == nil {
+		snd(&ocnserverpb.CallEvent{CallId: callID, Type: ocnserverpb.CallEvent_BUSY, Reason: "callee unavailable"})
+		srv.removeInLeg(callID)
+		return ""
+	}
 	pusher := srv.pushSender()
-	if err != nil || callee == nil || callee.FCMToken == "" || pusher == nil {
+	if callee.FCMToken == "" || pusher == nil {
+		// The callee can't be woken (e.g. a desktop client with no push):
+		// send the caller straight into the callee's voicemail.
+		if srv.routeInboundVoicemail(leg, callID) {
+			return callID
+		}
 		snd(&ocnserverpb.CallEvent{CallId: callID, Type: ocnserverpb.CallEvent_BUSY, Reason: "callee unavailable"})
 		srv.removeInLeg(callID)
 		return ""
@@ -430,6 +463,141 @@ func (srv *Server) inboundIncoming(stream ocnserverpb.OCNServerService_BridgeCal
 	snd(&ocnserverpb.CallEvent{CallId: callID, Type: ocnserverpb.CallEvent_RINGING})
 	log.Printf("Bridge call %s queued for offline callee %s", callID, calleeNum)
 	return callID
+}
+
+// inboundRingDuration returns how long an online callee on an inbound bridge
+// call may ring before the remote caller is redirected to their voicemail.
+func (srv *Server) inboundRingDuration() time.Duration {
+	srv.mu.RLock()
+	defer srv.mu.RUnlock()
+	return srv.ringTimeout
+}
+
+// onInboundRingTimeout fires when an online local callee on an inbound bridge
+// call does not answer in time: the remote caller is redirected into the
+// callee's voicemail.
+func (srv *Server) onInboundRingTimeout(callID string) {
+	srv.fedMu.Lock()
+	leg := srv.inLegs[callID]
+	if leg == nil || leg.callee == nil || leg.answered || leg.service != nil {
+		srv.fedMu.Unlock()
+		return
+	}
+	leg.timer = nil
+	srv.fedMu.Unlock()
+
+	// Stop the local callee's ring and tell them the call was not answered.
+	srv.endInboundCalleeRing(callID)
+
+	if !srv.routeInboundVoicemail(leg, callID) {
+		_ = leg.snd(&ocnserverpb.CallEvent{CallId: callID, Type: ocnserverpb.CallEvent_HANGUP, Reason: "no answer"})
+		srv.removeInLeg(callID)
+	}
+}
+
+// endInboundCalleeRing clears and notifies the ringing local callee that an
+// inbound call was not answered.
+func (srv *Server) endInboundCalleeRing(callID string) {
+	srv.fedMu.Lock()
+	leg := srv.inLegs[callID]
+	if leg == nil {
+		srv.fedMu.Unlock()
+		return
+	}
+	callee := leg.callee
+	leg.callee = nil
+	srv.fedMu.Unlock()
+	if callee == nil {
+		return
+	}
+	srv.clearCallID(callee, callID)
+	srv.sendMessage(callee, &ServerMessage{CallEnded: &CallEnded{CallID: callID, Reason: "no answer"}})
+}
+
+// declineInboundCallee handles a local callee declining an inbound bridge call
+// that is still ringing: the remote caller is routed into the callee's
+// voicemail. Returns false when the call is not an inbound ringing call (in
+// which case normal handling should proceed).
+func (srv *Server) declineInboundCallee(client *Client, callID string) bool {
+	srv.fedMu.Lock()
+	leg := srv.inLegs[callID]
+	if leg == nil || leg.callee != client || leg.answered || leg.service != nil {
+		srv.fedMu.Unlock()
+		return false
+	}
+	if leg.timer != nil {
+		leg.timer.Stop()
+		leg.timer = nil
+	}
+	leg.callee = nil
+	srv.fedMu.Unlock()
+
+	srv.clearCallID(client, callID)
+
+	if srv.routeInboundVoicemail(leg, callID) {
+		log.Printf("Call %s declined (inbound); remote caller routed to voicemail", callID)
+		return true
+	}
+	// Voicemail unavailable: decline normally (hang up on the remote caller).
+	_ = leg.snd(&ocnserverpb.CallEvent{CallId: callID, Type: ocnserverpb.CallEvent_HANGUP, Reason: "declined"})
+	srv.removeInLeg(callID)
+	return true
+}
+
+// routeInboundVoicemail answers an inbound bridge call with a voicemail
+// recording session for the local callee (calleeNum), so the remote caller can
+// leave a message. Returns false when voicemail is unavailable.
+func (srv *Server) routeInboundVoicemail(leg *inLeg, callID string) bool {
+	vm := srv.voicemailManager()
+	if vm == nil || !vm.Enabled() || leg == nil || leg.offer == nil {
+		return false
+	}
+	recipient, _ := srv.store.GetUserByNumber(leg.calleeNum)
+	if recipient == nil {
+		return false
+	}
+	lv := voicemail.NewLeaveService(vm, recipient, canonicalNumber(leg.callerArea, leg.callerNum), leg.callerName)
+	lv.SetICEServers(srv.serviceICEServers())
+	lv.OnSelfEnd = func(id string) {
+		_ = leg.snd(&ocnserverpb.CallEvent{CallId: id, Type: ocnserverpb.CallEvent_HANGUP, Reason: "voicemail complete"})
+		srv.fedMu.Lock()
+		if cur, ok := srv.inLegs[id]; ok && cur == leg {
+			delete(srv.inLegs, id)
+		}
+		srv.fedMu.Unlock()
+	}
+
+	srv.fedMu.Lock()
+	leg.service = lv
+	leg.callee = nil
+	leg.answered = true
+	srv.fedMu.Unlock()
+
+	answer, err := lv.HandleCall(callID, &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: leg.offer.SDP}, func(c webrtc.ICECandidateInit) {
+		_ = leg.snd(&ocnserverpb.CallEvent{CallId: callID, Type: ocnserverpb.CallEvent_ICE, Candidate: iceInitToCommon(c)})
+	})
+	if err != nil {
+		srv.fedMu.Lock()
+		leg.service = nil
+		leg.answered = false
+		srv.fedMu.Unlock()
+		_ = lv.EndCall(callID)
+		log.Printf("voicemail: failed to answer inbound call %s: %v", callID, err)
+		return false
+	}
+	_ = leg.snd(&ocnserverpb.CallEvent{CallId: callID, Type: ocnserverpb.CallEvent_ANSWER, Sdp: &commonpb.SDPSession{Sdp: answer.SDP, Type: answer.Type.String()}})
+	log.Printf("voicemail: inbound call %s recording for %s", callID, recipient.Number)
+
+	// Replay any ICE candidates the caller sent while the callee was ringing,
+	// so the recorder (a different media endpoint) can connect to them.
+	srv.fedMu.Lock()
+	buffered := make([]webrtc.ICECandidateInit, len(leg.candidates))
+	copy(buffered, leg.candidates)
+	srv.fedMu.Unlock()
+	for _, c := range buffered {
+		_ = lv.HandleICE(c)
+	}
+	return true
 }
 
 // handleNetService answers a hosted 800/900 service call over the bridge.
@@ -471,6 +639,10 @@ func (srv *Server) inboundRemoteHangup(callID, reason string) {
 	srv.fedMu.Lock()
 	leg := srv.inLegs[callID]
 	if leg != nil {
+		if leg.timer != nil {
+			leg.timer.Stop()
+			leg.timer = nil
+		}
 		delete(srv.inLegs, callID)
 	}
 	srv.fedMu.Unlock()

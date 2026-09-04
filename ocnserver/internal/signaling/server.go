@@ -30,14 +30,6 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// pendingCallTimeout is how long an FCM-woken call stays queued for an offline
-// callee before the caller is told the call was not answered.
-const pendingCallTimeout = 45 * time.Second
-
-// ringTimeout is how long an online callee may ring before an unanswered call
-// is routed into their voicemail.
-const ringTimeout = 25 * time.Second
-
 type Client struct {
 	conn   *websocket.Conn
 	user   *store.User
@@ -70,6 +62,11 @@ type Server struct {
 	// no-answer timer (or a decline/disconnect) can redirect to voicemail.
 	ringStates map[string]*ringState
 	ringMu     sync.Mutex
+
+	// Timeouts before an unanswered call is routed to voicemail. Defaulted to
+	// 15s (see NewServer) and overridable via SetCallTimeouts from config.
+	ringTimeout        time.Duration // online callee ringing window
+	pendingCallTimeout time.Duration // offline (pushed) callee queue window
 
 	// Federation (registry + inter-server calls)
 	reg         registryClient // nil when standalone
@@ -116,23 +113,58 @@ type registryClient interface {
 
 func NewServer(s *store.Store, a *auth.AuthManager, alloc *numbers.Allocator, areaCode string, reg *services.Registry, pusher push.Sender) *Server {
 	srv := &Server{
-		store:        s,
-		auth:         a,
-		allocator:    alloc,
-		areaCode:     areaCode,
-		clients:      make(map[string]*Client),
-		services:     reg,
-		svcCalls:     make(map[string]*serviceCall),
-		pendingCalls: make(map[string]*pendingCall),
-		pusher:       pusher,
-		ringStates:   make(map[string]*ringState),
-		gConns:       make(map[string]*grpc.ClientConn),
-		outLegs:      make(map[string]*outLeg),
-		inLegs:       make(map[string]*inLeg),
-		netSvcs:      make(map[string]services.Service),
+		store:              s,
+		auth:               a,
+		allocator:          alloc,
+		areaCode:           areaCode,
+		clients:            make(map[string]*Client),
+		services:           reg,
+		svcCalls:           make(map[string]*serviceCall),
+		pendingCalls:       make(map[string]*pendingCall),
+		pusher:             pusher,
+		ringStates:         make(map[string]*ringState),
+		gConns:             make(map[string]*grpc.ClientConn),
+		outLegs:            make(map[string]*outLeg),
+		inLegs:             make(map[string]*inLeg),
+		netSvcs:            make(map[string]services.Service),
+		ringTimeout:        15 * time.Second,
+		pendingCallTimeout: 15 * time.Second,
 	}
 	go srv.expirePendingCalls()
 	return srv
+}
+
+// SetCallTimeouts overrides how long an unanswered call rings before it is
+// routed to voicemail: ring for an online callee, pending for an offline
+// (pushed) callee.
+func (srv *Server) SetCallTimeouts(ring, pending time.Duration) {
+	if ring <= 0 {
+		ring = 15 * time.Second
+	}
+	if pending <= 0 {
+		pending = 15 * time.Second
+	}
+	srv.mu.Lock()
+	srv.ringTimeout = ring
+	srv.pendingCallTimeout = pending
+	srv.mu.Unlock()
+}
+
+// serviceICEServers returns the network STUN/TURN servers (normally handed to
+// clients) as WebRTC ICE servers, so server-hosted media endpoints like the
+// voicemail recorder can be reached by callers behind NAT.
+func (srv *Server) serviceICEServers() []webrtc.ICEServer {
+	srv.mu.RLock()
+	defer srv.mu.RUnlock()
+	var out []webrtc.ICEServer
+	for _, s := range srv.iceServers {
+		out = append(out, webrtc.ICEServer{
+			URLs:       s.URLs,
+			Username:   s.Username,
+			Credential: s.Credential,
+		})
+	}
+	return out
 }
 
 // SetVoicemail attaches (or detaches, with nil) the voicemail manager.
@@ -706,11 +738,18 @@ func (srv *Server) handleCallAnswer(client *Client, msg *CallAnswer) {
 	// Cross-server inbound: forward the answer to the remote caller.
 	srv.fedMu.Lock()
 	leg := srv.inLegs[msg.CallID]
-	srv.fedMu.Unlock()
 	if leg != nil {
+		if leg.timer != nil {
+			leg.timer.Stop()
+			leg.timer = nil
+		}
+		leg.answered = true
 		if leg.callee == nil {
 			leg.callee = client
 		}
+	}
+	srv.fedMu.Unlock()
+	if leg != nil {
 		if err := leg.snd(&ocnserverpb.CallEvent{
 			CallId: msg.CallID,
 			Type:   ocnserverpb.CallEvent_ANSWER,
@@ -772,7 +811,7 @@ func (srv *Server) handleCallHangup(client *Client, msg *CallHangup) {
 	// decline and routes the caller into voicemail.
 	if rs := srv.takeRing(callID); rs != nil {
 		if rs.callee == client {
-			if srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, "") {
+			if srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, callID) {
 				log.Printf("Call %s declined; caller routed to voicemail", callID)
 				return
 			}
@@ -781,6 +820,12 @@ func (srv *Server) handleCallHangup(client *Client, msg *CallHangup) {
 		}
 		srv.clearCallID(rs.callee, callID)
 		srv.sendMessage(rs.callee, &ServerMessage{CallEnded: &CallEnded{CallID: callID, Reason: "hangup"}})
+		return
+	}
+
+	// An inbound (cross-server) callee hanging up while still ringing is a
+	// decline — route the remote caller into their voicemail.
+	if srv.declineInboundCallee(client, callID) {
 		return
 	}
 
@@ -913,7 +958,7 @@ func (srv *Server) handleCallDecline(client *Client, msg *CallDecline) {
 		return
 	}
 	srv.clearCallID(client, callID)
-	if srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, "") {
+	if srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, callID) {
 		log.Printf("Call %s declined; caller routed to voicemail", callID)
 		return
 	}
@@ -925,7 +970,10 @@ func (srv *Server) handleCallDecline(client *Client, msg *CallDecline) {
 func (srv *Server) startRing(callID string, caller, callee *Client, offer *SDPSession) {
 	rs := &ringState{caller: caller, callee: callee, calleeUser: callee.user, offer: offer}
 	srv.ringMu.Lock()
-	rs.timer = time.AfterFunc(ringTimeout, func() { srv.onRingTimeout(callID) })
+	srv.mu.RLock()
+	rt := srv.ringTimeout
+	srv.mu.RUnlock()
+	rs.timer = time.AfterFunc(rt, func() { srv.onRingTimeout(callID) })
 	srv.ringStates[callID] = rs
 	srv.ringMu.Unlock()
 }
@@ -966,7 +1014,7 @@ func (srv *Server) onRingTimeout(callID string) {
 	if !srv.isOnline(rs.caller) {
 		return
 	}
-	if srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, "") {
+	if srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, callID) {
 		return
 	}
 	srv.endForClient(rs.caller, callID, "no answer")
@@ -1014,6 +1062,7 @@ func (srv *Server) routeToVoicemail(caller *Client, recipient *store.User, offer
 		canonicalNumber(caller.user.AreaCode, caller.user.Number),
 		caller.user.DisplayName,
 	)
+	lv.SetICEServers(srv.serviceICEServers())
 	lv.OnSelfEnd = func(id string) {
 		srv.endServiceCall(caller, id, "voicemail complete")
 	}
@@ -1530,9 +1579,12 @@ func (srv *Server) expirePendingCalls() {
 	defer ticker.Stop()
 	for range ticker.C {
 		var expired []expiredCall
+		srv.mu.RLock()
+		timeout := srv.pendingCallTimeout
+		srv.mu.RUnlock()
 		srv.mu.Lock()
 		for num, p := range srv.pendingCalls {
-			if time.Since(p.createdAt) > pendingCallTimeout {
+			if time.Since(p.createdAt) > timeout {
 				expired = append(expired, expiredCall{num: num, p: p})
 				delete(srv.pendingCalls, num)
 			}
@@ -1543,11 +1595,14 @@ func (srv *Server) expirePendingCalls() {
 			p := ec.p
 			log.Printf("Pending call %s to %s expired (no answer)", p.callID, ec.num)
 			if p.remote {
-				// Notify the remote caller and drop the leg.
+				// Offline callee never answered: route the remote caller into
+				// their voicemail if available.
 				srv.fedMu.Lock()
 				leg := srv.inLegs[p.callID]
-				delete(srv.inLegs, p.callID)
 				srv.fedMu.Unlock()
+				if leg != nil && srv.routeInboundVoicemail(leg, p.callID) {
+					continue
+				}
 				if leg != nil {
 					_ = leg.snd(&ocnserverpb.CallEvent{
 						CallId: p.callID,
@@ -1555,11 +1610,12 @@ func (srv *Server) expirePendingCalls() {
 						Reason: "no answer",
 					})
 				}
+				srv.removeInLeg(p.callID)
 				continue
 			}
 			if srv.isOnline(p.caller) {
 				recipient, _ := srv.store.GetUserByNumber(ec.num)
-				if srv.routeToVoicemail(p.caller, recipient, p.offer, "") {
+				if srv.routeToVoicemail(p.caller, recipient, p.offer, p.callID) {
 					continue
 				}
 				srv.clearCallID(p.caller, p.callID)
@@ -1605,7 +1661,7 @@ func (srv *Server) unregisterClient(client *Client) {
 		if rs := srv.takeRing(callID); rs != nil {
 			if rs.callee == client {
 				if srv.isOnline(rs.caller) {
-					if !srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, "") {
+					if !srv.routeToVoicemail(rs.caller, rs.calleeUser, rs.offer, callID) {
 						srv.endForClient(rs.caller, callID, "disconnect")
 					}
 				}
