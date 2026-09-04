@@ -1,33 +1,77 @@
-# OCN — OpenCarrier.Network Game Plan
+# OCN — OpenCarrier.Network
 
 ## Vision
 
-A federated, encrypted phone network. Anyone can run an exchange, users get phone numbers via keypair identity (kSIM), voicemail is end-to-end encrypted, and calls route peer-to-peer when possible.
+A federated telephone network anyone can operate. Anyone can run an exchange,
+own an area code, and join one shared numbering space. Numbers are bound to a
+kSIM Ed25519 keypair; calls are peer-to-peer over WebRTC (DTLS-SRTP). Stored
+voicemail and messages are encrypted at rest by the server today; recipient-only
+E2E encryption for stored media is a stated later goal.
+
+---
+
+## Where we are (live today)
+
+- **Registry** at `opencarrier.network` (HTTPS / Let's Encrypt website + `/admin`):
+  area-code pool (200–999), routing table, embedded TURN relay, and delegated
+  FCM push (call / voicemail / message wake-ups).
+- **Exchange 440 · OpenCarrier** (`ocn-first`): registered users, WebRTC
+  signaling, federation to the registry, hosted network services, per-user
+  voicemail and messaging mailboxes.
+- **Network services**: `800-776-6001` party-room conference (server-side
+  libopus mixing), announcement lines, and the `*01` echo test.
+- **Softphone** (Android + Linux): P2P calls, visual voicemail, 1:1 text + image
+  messaging with offline delivery, contacts, call history, QR/deep-link
+  provisioning, and notifications.
+
+---
+
+## Where we're going
+
+**Next**
+- SIP/ATA phone interop (server-level SIP registrar + WebRTC↔SIP media bridge).
+- PIN/DTMF voicemail boxes so analog/ATA phones can check mailboxes.
+- Federation hardening: inter-server TLS + auth (dev links are plaintext today).
+- Public registry exchange-directory / live-status API surfaced on the website.
+
+**Later / backlog**
+- Group messaging (cut from messaging v1).
+- True recipient-only E2E for stored voicemail/messages.
+- kSIM backup/export; more desktop/mobile platforms.
+- Anti-spam: per-exchange rate limiting, per-user block lists.
+
+More exchanges joining the registry (440 is the first).
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                   OCN Registry                        │
-│  Area code pool │ Routing table │ STUN │ OCNServer dir │
-└────────┬──────────────────────────┬──────────────────┘
-         │ gRPC + TLS               │ gRPC + TLS
-  ┌──────▼───────┐          ┌───────▼──────┐
-  │  OCNServer A   │◄────────►│  OCNServer B   │
-  │  Go server    │ WebRTC   │  Go server    │
-  │  Area: 212    │  P2P     │  Area: 310    │
-  └──┬──┬──┬──┬──┘          └──┬──┬──┬──┬──┘
-     │  │  │  │                │  │  │  │
-   SIP  │  │  SIP            SIP  │  │  SIP
-     │  │  │  │                │  │  │  │
-   ATA  │  │  ATA            ATA  │  │  ATA
-      WebRTC │                   WebRTC │
-         │   │                      │   │
-     Softphone Voicemail        Softphone Voicemail
-     (Flutter) (E2E enc)       (Flutter) (E2E enc)
+┌─────────────────────────────────────────────────────────────┐
+│                     OCN Registry (opencarrier.network)        │
+│  Area-code pool │ Routing │ ResolveService │ TURN │ FCM push  │
+└───────┬───────────────────────────────┬─────────────────────┘
+        │ gRPC (TLS in prod)            │ gRPC
+ ┌──────▼────────┐               ┌──────▼────────┐
+ │  Exchange 440 │◄─────────────►│  Your Exchange │
+ │  ocnserver    │  BridgeCall    │  ocnserver    │
+ │  Go + pion    │  (calls)       │  Go + pion    │
+ └──┬───────┬────┘  DeliverDM     └──┬───────┬────┘
+    │       │      (messages)        │       │
+ WebRTC    │  services/voicemail  WebRTC    │
+   P2P     │  (server media)        P2P     │
+   calls   │  conference/echo               │
+      Softphone (Android/Linux)       (planned) ATA/SIP phones
+      + text/image messaging
 ```
+
+Key points:
+- Client↔client calls are **P2P WebRTC**; the server only relays signaling.
+- The server terminates media **only** for hosted services (conference rooms,
+  voicemail recording/playback, announcements).
+- Messaging is relayed by the sender's exchange and queued on the recipient's
+  home exchange when offline.
+- SIP/ATA interop is planned, not yet present (dashed above).
 
 ---
 
@@ -35,295 +79,118 @@ A federated, encrypted phone network. Anyone can run an exchange, users get phon
 
 | Range | Purpose | Owner |
 |-------|---------|-------|
-| `800-XXX-XXXX` | OCN services (directory, echo test) | OCN Registry |
-| `900-XXX-XXXX` | OCN premium/info services | OCN Registry |
-| `200-999-XXX-XXXX` | Federated exchange area codes | Assigned on join |
+| `800-XXX-XXXX` | Network services (conference, announcement) | Registry |
+| `900-XXX-XXXX` | Network services (reserved) | Registry |
+| `200-999-XXX-XXXX` | Exchange area codes | Assigned on join |
 
-- **Local dialing**: `XXX-XXXX` (7 digits, same exchange)
-- **Cross-exchange**: `XXX-XXX-XXXX` (full number)
-- **No portability**: Numbers belong to the issuing exchange
-
----
-
-## Component 1: kSIM Identity
-
-Keypair-based identity. No SIM card, no eSIM — just a cryptographic keypair that proves you are you.
-
-### Lifecycle
-1. User installs softphone → generates Ed25519 keypair
-2. Private key encrypted locally with user passphrase
-3. User picks an exchange, registers with public key
-4. OCNServer verifies signature, issues phone number, stores binding
-5. All future auth: exchange sends challenge, client signs with private key
-
-### kSIM File (stored on device)
-```json
-{
-  "version": 1,
-  "keypair": {
-    "public": "base64-ed25519-pubkey",
-    "private": "base64-ed25519-privkey-encrypted"
-  },
-  "display_name": "Alice",
-  "exchange": "exchange-a.ocn.network",
-  "number": "212-555-1234",
-  "registered_at": "2026-09-02T00:00:00Z"
-}
-```
-
-### Caller ID
-- Display name stored in kSIM and registered with exchange
-- OCNServer includes caller display name in signaling metadata on outbound calls
-- Recipient sees: `212-555-1234 (Alice)`
+- **Local dialing**: `XXX-XXXX` (7 digits, same exchange).
+- **Cross-exchange**: `XXX-XXX-XXXX` (full 10-digit number).
+- **No portability**: numbers belong to the issuing exchange.
 
 ---
 
-## Component 2: OCN Registry (Central)
+## Components
 
-**Stack**: Go, gRPC + REST gateway, SQLite/BoltDB
+### Component 1: kSIM Identity
+- ✅ Keypair generation (Ed25519), signing, challenge-response auth.
+- ✅ Number is bound to the kSIM public key at the issuing exchange.
+- ✅ Provisioning via admin-issued QR / `ocnksim://` deep links.
+- ✅ Per-connection identity: once registered, the WebSocket is trusted for that
+  user (no per-message signatures today).
+- ⏳ Backup/export of kSIM identity.
 
-### Responsibilities
-- **Area code assignment**: Pool of available 3-digit codes, assign to joining exchanges
-- **Routing table**: `area_code → exchange gRPC endpoint + public key`
-- **OCNServer directory**: Public list of all exchanges (name, area code, description)
-- **STUN server**: Help WebRTC clients discover public endpoints
-- **800/900 services**: Directory lookup, echo test
+### Component 2: OCN Registry
+- ✅ Area-code assignment (200–999), routing table, service-number resolution.
+- ✅ Embedded TURN relay + ICE server advertisement.
+- ✅ Delegated FCM push (call / voicemail / message) using a shared Firebase
+  service account.
+- ✅ HTTPS website (Let's Encrypt) + admin panel.
+- ✅ gRPC (TLS): `RegisterOCNServer`, `DeregisterOCNServer`, `ListOCNServers`,
+  `GetRoute`, `ResolveService`, `GetICECandidates`, `PushDevice`.
+- ⏳ Public exchange-directory / live-status API for the website.
 
-### gRPC API
-```protobuf
-service OCNRegistry {
-  // OCNServer management
-  rpc RegisterOCNServer(RegisterOCNServerRequest) returns (RegisterOCNServerResponse);
-  rpc DeregisterOCNServer(DeregisterOCNServerRequest) returns (google.protobuf.Empty);
-  rpc ListOCNServers(ListOCNServersRequest) returns (ListOCNServersResponse);
+### Component 3: OCNServer (Go exchange)
+- ✅ User registration/provisioning, number pool allocation, SQLite store.
+- ✅ WebSocket JSON signaling (calls, voicemail, messaging, ICE).
+- ✅ Caller ID (display name) on outbound/inbound signaling.
+- ✅ Local + federated calls over `BridgeCall` (gRPC streaming CallEvents).
+- ✅ Hosted 800/900 network services: conference, announcement, echo (`*01`).
+- ✅ Voicemail: record on offline / no-answer / declined, notify, visual playback
+  in the app; audio encrypted at rest (AES-256-GCM, server master secret).
+- ✅ Messaging: 1:1 text + image, online relay + encrypted offline outbox +
+  register-time flush; federated via `DeliverDM`.
+- ✅ Admin panel (lines, provisioning tokens, federation, hosted services).
+- ⏳ SIP registrar + WebRTC↔SIP media bridge (planned for ATA/analog phones).
+- ⏳ DTMF/PIN voicemail boxes.
 
-  // Routing
-  rpc GetRoute(GetRouteRequest) returns (GetRouteResponse);
+### Component 4: Softphone (Flutter)
+- Platforms: Android ✅, Linux ✅; Windows/macOS/iOS ⏳.
+- ✅ Dialer (7/10-digit smart formatting), WebRTC calls, ringback, reconnect.
+- ✅ Caller ID resolution (contacts → server name → formatted number).
+- ✅ Contacts + call history (local JSON stores).
+- ✅ Visual voicemail (list, playback, unread badge, notifications).
+- ✅ 1:1 text + image messaging (threads, delivered state, offline delivery,
+  unread badges, notifications).
+- ✅ Incoming-call + new-message/voicemail notifications (FCM/local).
+- ⏳ In-call DTMF sending (keypad dials digits) — planned with SIP/ATA work.
+- ⏳ kSIM backup/export.
 
-  // STUN
-  rpc GetICECandidates(ICECandidateRequest) returns (ICECandidateResponse);
-
-  // 800/900 services
-  rpc HandleServiceCall(ServiceCallRequest) returns (ServiceCallResponse);
-}
-```
-
-### Data Model
-```
-OCNServer {
-  area_code:      string (3 digits, unique)
-  name:           string
-  description:    string
-  server_address: string (gRPC endpoint)
-  public_key:     bytes (exchange identity key)
-  registered_at:  timestamp
-  status:         ACTIVE | SUSPENDED
-}
-```
-
----
-
-## Component 3: OCNServer (Go)
-
-**Stack**: Go, pion/webrtc, embedded SIP, gRPC client, SQLite/BoltDB
-
-### Responsibilities
-- **User registration**: Verify kSIM signatures, issue phone numbers from local pool
-- **Local routing**: Connect two local users via WebRTC signaling relay
-- **Cross-exchange routing**: Query registry for route, bridge to remote exchange
-- **SIP/ATA**: Embedded SIP registrar + proxy for analog adapters
-- **Voicemail**: Store E2E-encrypted voicemail (can't be read by server)
-- **Caller ID**: Attach display name to all outbound call signaling
-
-### Directory Structure
-```
-ocnserver/
-├── cmd/exchange/main.go
-├── internal/
-│   ├── auth/          # kSIM challenge-response verification
-│   ├── callerid/      # Display name resolution
-│   ├── registry/      # gRPC client to OCN registry
-│   ├── routing/       # Local vs cross-exchange decision
-│   ├── signaling/     # WebSocket signaling server
-│   ├── sip/           # SIP registrar + proxy
-│   ├── numbers/       # 7-digit number allocation
-│   ├── voicemail/     # Encrypted voicemail storage + retrieval
-│   ├── stun/          # STUN relay
-│   └── store/         # SQLite/BoltDB (users, numbers, voicemail metadata)
-├── proto/
-└── config/
-```
-
-### Call Flow — Local
-```
-1. Caller → WebSocket → OCNServer: "call 555-1234" (signed with kSIM)
-2. OCNServer verifies signature, looks up callee
-3. OCNServer relays SDP offer/answer between caller and callee
-4. WebRTC P2P established directly (DTLS-SRTP)
-5. Caller ID: OCNServer injects caller display_name into signaling
-```
-
-### Call Flow — Cross-OCNServer
-```
-1. Caller dials 310-555-6789
-2. OCNServer A extracts area code "310", queries registry for route
-3. Registry returns OCNServer B's gRPC endpoint
-4. OCNServer A → gRPC → OCNServer B: "incoming call for 555-6789"
-5. OCNServer B locates callee, relays SDP back through chain
-6. WebRTC P2P established between phones (or TURN relay if NAT blocks)
-7. All media encrypted (DTLS-SRTP)
-```
-
-### Voicemail — E2E Encrypted
-```
-1. Callee doesn't answer → OCNServer prompts caller to leave message
-2. Audio recorded by exchange
-3. OCNServer encrypts audio with callee's public key (from kSIM)
-4. Encrypted blob stored on exchange disk
-5. When callee's phone comes online:
-   a. OCNServer notifies phone of pending voicemail
-   b. Phone requests encrypted blob
-   c. Phone decrypts locally with private key
-   d. OCNServer never has plaintext — zero-knowledge storage
-```
-
-### SIP/ATA Integration
-- ATA registers with exchange using SIP credentials (derived from kSIM registration)
-- Inbound: WebRTC call → SIP INVITE to ATA
-- Outbound: ATA SIP INVITE → WebRTC signaling to exchange
-- Caller ID passed through SIP headers
+### Component 5: Protocol inventory
+- `proto/registry.proto` — registry ↔ exchange (above RPC list).
+- `proto/ocnserver.proto` — exchange ↔ exchange: `BridgeCall` (calls),
+  `DeliverDM` (messages).
+- `proto/common.proto` — shared messages.
+- Client ↔ exchange is **JSON over WebSocket** (`signaling/messages.go`); the
+  aspirational `signaling.proto` / `voicemail.proto` are not used.
 
 ---
 
-## Component 4: Softphone (Flutter)
-
-**Stack**: Flutter, Dart, flutter_webrtc, pointycastle (crypto)
-
-### Platforms
-| Platform | v1 | Future |
-|----------|-----|--------|
-| Windows  | ✅ |  |
-| Linux    | ✅ |  |
-| Android  | ✅ |  |
-| macOS    |  | ✅ |
-| iOS      |  | ✅ |
-
-### Features
-- **kSIM management**: Generate, backup, import/export keypair
-- **OCNServer registration**: Browse exchange directory, register with one
-- **Dialer**: 7-digit local, 10-digit cross-exchange, smart formatting
-- **Caller ID**: Set display name, see caller info on incoming calls
-- **In-call**: Mute, speaker, hold, DTMF
-- **Voicemail**: Retrieve + decrypt E2E voicemail locally
-- **Contacts**: Local contact book
-- **Call history**: Incoming/outgoing/missed with caller ID
-
-### Directory Structure
-```
-softphone/
-├── lib/
-│   ├── main.dart
-│   ├── core/
-│   │   ├── ksim/          # Keypair gen, signing, encrypted storage
-│   │   ├── signaling/     # WebSocket client
-│   │   ├── webrtc/        # Call management
-│   │   ├── crypto/        # Voicemail decryption, message signing
-│   │   └── config/        # OCNServer URL, kSIM path
-│   ├── features/
-│   │   ├── dialer/        # Dial pad + number input
-│   │   ├── call/          # Active call screen + caller ID display
-│   │   ├── voicemail/     # Voicemail list + playback
-│   │   ├── contacts/      # Contact management
-│   │   ├── history/       # Call log
-│   │   ├── registration/  # OCNServer browser + kSIM registration
-│   │   └── settings/      # kSIM info, display name, exchange
-│   └── ui/                # Shared widgets, theme
-├── android/
-├── linux/
-└── windows/
-```
-
----
-
-## Component 5: Proto Definitions
-
-```
-proto/
-├── registry.proto       # Registry ↔ OCNServer (area codes, routing, STUN)
-├── exchange.proto       # OCNServer ↔ OCNServer (cross-exchange calls)
-├── signaling.proto      # Client ↔ OCNServer (WebSocket, JSON or protobuf)
-├── voicemail.proto      # Voicemail upload/download/notification
-└── common.proto         # PhoneNumber, kSIMId, DisplayName, etc.
-```
-
----
-
-## v1 Milestone — Single OCNServer + Softphone
-
-### Phase 1: Foundation
-- [ ] Define all proto files
-- [ ] kSIM library (Go) — keypair gen, signing, verification
-- [ ] kSIM library (Dart) — keypair gen, signing, encrypted storage
-- [ ] OCNServer server skeleton (Go, config, gRPC server)
-
-### Phase 2: OCNServer Core
-- [ ] User registration (kSIM verify → issue number)
-- [ ] Local number pool allocation (7-digit)
-- [ ] SQLite store (users, numbers, display names)
-- [ ] WebSocket signaling server
-- [ ] Caller ID: store + attach display names to signaling
-
-### Phase 3: Softphone
-- [ ] Flutter project (Windows + Linux + Android)
-- [ ] kSIM generation + passphrase-encrypted storage
-- [ ] OCNServer browser + registration flow
-- [ ] Dialer UI (smart 7/10 digit input)
-- [ ] WebRTC call initiation + reception
-- [ ] Caller ID display on incoming calls
-- [ ] In-call UI (mute, hangup, speaker)
-- [ ] Call history with caller ID
-
-### Phase 4: Voicemail
-- [ ] OCNServer: voicemail prompt on unanswered calls
-- [ ] OCNServer: encrypt audio with callee's public key, store blob
-- [ ] OCNServer: notification to callee when voicemail pending
-- [ ] Softphone: voicemail list, fetch encrypted blob, decrypt + play locally
-
-### Phase 5: SIP/ATA
-- [ ] Embedded SIP registrar in exchange
-- [ ] SIP ↔ WebRTC media bridge
-- [ ] ATA registration with kSIM-derived credentials
-- [ ] Caller ID passthrough via SIP headers
-
-### Phase 6: Registry + Federation
-- [ ] OCN Registry server (area code assignment, routing, STUN)
-- [ ] OCNServer directory (public list endpoint)
-- [ ] OCNServer registration with registry
-- [ ] Cross-exchange call routing
-- [ ] 800 number: Directory service (browse exchanges)
-- [ ] 800 number: Echo test
-
----
-
-## Tech Stack Summary
+## Tech Stack
 
 | Component | Stack |
 |-----------|-------|
-| Registry | Go, gRPC, SQLite/BoltDB, STUN |
-| OCNServer | Go, gRPC, pion/webrtc, embedded SIP, SQLite/BoltDB |
-| Softphone | Flutter, Dart, flutter_webrtc, pointycastle |
+| Registry | Go, gRPC, SQLite, embedded TURN (pion), Firebase FCM |
+| Exchange | Go, pion/webrtc, libopus (cgo mixing), SQLite |
+| Softphone | Flutter, flutter_webrtc, audioplayers, image_picker |
 | Identity | Ed25519 keypairs (kSIM) |
-| Signaling | WebSocket (JSON or protobuf) |
-| Media | WebRTC (DTLS-SRTP), SRTP for SIP |
-| Voicemail | AES-256 encrypted with recipient's public key |
-| Transport | gRPC + TLS (registry↔exchange), WSS (client↔exchange) |
+| Signaling | WebSocket JSON (client↔exchange) |
+| Media | WebRTC DTLS-SRTP (P2P calls; server media for services) |
+| At-rest storage | AES-256-GCM, keys derived from a per-server master secret |
+| Transport | gRPC + TLS (registry↔exchange, prod), wss planned (client↔exchange) |
 
 ---
 
-## Spam Prevention (Deferred)
+## Roadmap
 
-Not in v1. Future options:
-- OCNServer-level rate limiting per caller
-- Block lists per user
-- Reputation scoring across exchanges
-- Challenge-response for unknown callers
+**Done**
+- Registry + federation (routing, TURN, FCM relay, website, admin).
+- Softphone core (provisioning, dialer, calls, caller ID, contacts, history).
+- Voicemail (record on offline/no-answer/decline, notifications, visual
+  playback, encrypted at rest).
+- Messaging (1:1 text + images, offline queue, delivered state, federated).
+- Network services (conference, announcement, echo) on 800/900.
+- Homepage redesign + GitHub repo hygiene.
+
+**Next**
+- [ ] SIP/ATA interop (SIP registrar + media bridge).
+- [ ] PIN/DTMF voicemail boxes.
+- [ ] Inter-server TLS/auth hardening.
+- [ ] Public exchange directory / live-status API + website surfacing.
+- [ ] Onboard additional exchanges.
+
+**Later**
+- [ ] Group messaging.
+- [ ] Recipient-only E2E for stored voicemail/messages.
+- [ ] kSIM backup/export; more platforms.
+- [ ] Anti-spam (rate limiting, block lists).
+
+---
+
+## Notes
+
+- Inter-server links are plaintext in development; production is to be hardened
+  to TLS + per-server auth.
+- The per-client WS send buffer drops messages when full; inbound messages are
+  re-delivered on next register until acked.
+- Inline image messages are capped at 4 MB; undelivered outbox entries expire
+  after 7 days.
