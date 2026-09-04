@@ -22,6 +22,7 @@ class CallNotifications {
 
   static const _channelId = 'incoming_calls';
   static const _voicemailChannelId = 'voicemail';
+  static const _messageChannelId = 'messages';
 
   /// Initialize from the app's main isolate and ask the user for notification
   /// permission (Android 13+). Should only be called when the UI is available.
@@ -174,6 +175,48 @@ class CallNotifications {
       payload: payload,
     );
     log('CallNotifications: showing voicemail notification from $callerNumber');
+  }
+
+  /// Show a "new message" notification. Safe from a background isolate.
+  static Future<void> showMessage({
+    required String fromNumber,
+    required String fromName,
+  }) async {
+    if (!Platform.isAndroid) return;
+    await _ensureInit();
+
+    final title = fromName.isNotEmpty ? fromName : fromNumber;
+    final body = 'New message';
+
+    final payload = jsonEncode({
+      'type': 'message',
+      'caller_number': fromNumber,
+      'caller_name': fromName,
+    });
+
+    final id = '$fromNumber${DateTime.now().microsecondsSinceEpoch}'
+        .hashCode &
+        0x7fffffff;
+
+    const details = AndroidNotificationDetails(
+      _messageChannelId,
+      'Messages',
+      channelDescription: 'New message notifications',
+      importance: Importance.high,
+      priority: Priority.high,
+      category: AndroidNotificationCategory.message,
+      visibility: NotificationVisibility.public,
+      styleInformation: BigTextStyleInformation(''),
+    );
+
+    await _plugin.show(
+      id: id,
+      title: title,
+      body: body,
+      notificationDetails: NotificationDetails(android: details),
+      payload: payload,
+    );
+    log('CallNotifications: showing message notification from $fromNumber');
   }
 
   static Future<void> cancelAll() async {

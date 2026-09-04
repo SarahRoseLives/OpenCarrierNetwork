@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
@@ -72,10 +74,12 @@ class AppState extends ChangeNotifier {
   final ContactStore _contacts = ContactStore();
   final CallHistoryStore _history = CallHistoryStore();
   final VoicemailStore _voicemail = VoicemailStore();
+  final DmStore _dm = DmStore();
   bool _phoneDataLoaded = false;
   static int _idCounter = 0;
 
   final Map<String, Completer<Uint8List>> _audioWaiters = {};
+  final Map<String, Completer<Uint8List>> _dmImageWaiters = {};
 
   final SignalingClient _signaling;
   final WebRTCManager _webrtc = WebRTCManager();
@@ -171,6 +175,225 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---- Direct messaging ----
+
+  List<DmThread> get dmThreads => _dm.threads;
+  int get dmUnread => _dm.unreadTotal;
+  List<DmMessage> messagesFor(String peer) => _dm.messagesFor(peer);
+
+  /// Mark a thread read (local only) and return its messages.
+  List<DmMessage> openThread(String peer) {
+    _dm.markPeerRead(peer);
+    _dm.persist();
+    notifyListeners();
+    return _dm.messagesFor(peer);
+  }
+
+  Future<String> sendTextMessage(String peer, String text) async {
+    await _ensurePhoneData();
+    final clientId = _newId();
+    final msg = DmMessage(
+      id: clientId,
+      clientId: clientId,
+      peer: peer,
+      direction: 'out',
+      kind: 'text',
+      text: text,
+      status: 'sending',
+      createdAt: DateTime.now(),
+    );
+    _dm.addOrUpdate(msg);
+    await _dm.persist();
+    notifyListeners();
+    if (_signaling.isConnected) {
+      _signaling.dmSend(
+        to: peer,
+        clientId: clientId,
+        kind: 'text',
+        text: text,
+      );
+    } else {
+      _failMessage(clientId);
+    }
+    return clientId;
+  }
+
+  Future<String> sendImageMessage({
+    required String peer,
+    required Uint8List bytes,
+    required String mime,
+    String name = '',
+  }) async {
+    await _ensurePhoneData();
+    final clientId = _newId();
+    final path = await _dm.attachmentPathFor(
+      clientId,
+      ext: _extForMime(mime),
+    );
+    await File(path).writeAsBytes(bytes);
+    final msg = DmMessage(
+      id: clientId,
+      clientId: clientId,
+      peer: peer,
+      direction: 'out',
+      kind: 'image',
+      imageName: name,
+      imageMime: mime,
+      imagePath: path,
+      status: 'sending',
+      createdAt: DateTime.now(),
+    );
+    _dm.addOrUpdate(msg);
+    await _dm.persist();
+    notifyListeners();
+    if (_signaling.isConnected) {
+      _signaling.dmSend(
+        to: peer,
+        clientId: clientId,
+        kind: 'image',
+        imageName: name,
+        imageMime: mime,
+        imageB64: base64Encode(bytes),
+      );
+    } else {
+      _failMessage(clientId);
+    }
+    return clientId;
+  }
+
+  void _failMessage(String id) {
+    final m = _dm.byId(id);
+    if (m == null) return;
+    final updated = m.copyWith(status: 'failed');
+    _dm.removeById(id);
+    _dm.addOrUpdate(updated);
+    _dm.persist();
+    notifyListeners();
+  }
+
+  /// Local path to an image message's bytes, downloading from the server on
+  /// first access. Returns null if unavailable.
+  Future<String?> imagePathFor(DmMessage message) async {
+    final existing = message.imagePath;
+    if (existing != null && await File(existing).exists()) return existing;
+    if (!message.isImage) return null;
+    if (message.direction == 'out') return null;
+
+    final completer = Completer<Uint8List>();
+    _dmImageWaiters[message.id] = completer;
+    _signaling.dmAttachmentGet(message.id);
+    try {
+      final bytes = await completer.future.timeout(const Duration(seconds: 30));
+      final path = await _dm.attachmentPathFor(
+        message.id,
+        ext: _extForMime(message.imageMime ?? 'image/jpeg'),
+      );
+      await File(path).writeAsBytes(bytes);
+      _updateDmMessage(message, imagePath: path);
+      _signaling.dmAck(message.id);
+      return path;
+    } catch (e) {
+      log('AppState: image download failed for ${message.id}: $e');
+      return null;
+    } finally {
+      _dmImageWaiters.remove(message.id);
+    }
+  }
+
+  void _updateDmMessage(DmMessage original, {String? imagePath}) {
+    final current = _dm.byId(original.id);
+    if (current == null) return;
+    _dm.removeById(original.id);
+    _dm.addOrUpdate(current.copyWith(imagePath: imagePath));
+    _dm.persist();
+    notifyListeners();
+  }
+
+  void _onDmEvent(DmEventInfo event) {
+    if (event.type == 'status') {
+      final clientId = event.clientId;
+      if (clientId != null) {
+        final old = _dm.byClientId(clientId) ?? _dm.byId(clientId);
+        if (old != null) {
+          final replaced = DmMessage(
+            id: event.messageId.isEmpty ? old.id : event.messageId,
+            clientId: old.clientId,
+            peer: old.peer,
+            direction: old.direction,
+            kind: old.kind,
+            text: old.text,
+            imageName: old.imageName,
+            imageMime: old.imageMime,
+            imagePath: old.imagePath,
+            status: event.status ?? 'delivered',
+            createdAt: old.createdAt,
+          );
+          _dm.removeById(old.id);
+          _dm.addOrUpdate(replaced);
+          _dm.persist();
+          notifyListeners();
+        }
+      }
+      return;
+    }
+    if (event.type != 'new' || event.from == null) return;
+    final from = event.from!;
+    final peer = from;
+    final created = event.createdAt == null
+        ? DateTime.now()
+        : DateTime.fromMillisecondsSinceEpoch(event.createdAt!);
+    final isImage = event.kind == 'image';
+    final msg = DmMessage(
+      id: event.messageId,
+      peer: peer,
+      direction: 'in',
+      kind: event.kind ?? 'text',
+      text: event.text ?? '',
+      imageName: event.imageName,
+      imageMime: event.imageMime,
+      status: 'delivered',
+      read: false,
+      createdAt: created,
+    );
+    final isNew = _dm.addOrUpdate(msg);
+    _dm.persist();
+    notifyListeners();
+
+    if (!isImage) {
+      // Text is fully delivered — release the server outbox copy.
+      _signaling.dmAck(event.messageId);
+    } else {
+      final stored = _dm.byId(event.messageId);
+      if (stored == null || stored.imagePath == null) {
+        // Prefetch image bytes (also acks once cached).
+        imagePathFor(msg).then((_) {}).catchError((_) {});
+      } else {
+        _signaling.dmAck(event.messageId);
+      }
+    }
+    if (isNew) {
+      log('AppState: new dm from $from');
+      CallNotifications.showMessage(
+        fromNumber: event.from!,
+        fromName: event.fromName ?? '',
+      );
+    }
+  }
+
+  void _onDmAttachment(String messageId, String name, String mime, String b64) {
+    final c = _dmImageWaiters.remove(messageId);
+    if (c != null && !c.isCompleted) {
+      c.complete(base64Decode(b64));
+    }
+  }
+
+  String _extForMime(String mime) {
+    if (mime.contains('png')) return 'png';
+    if (mime.contains('gif')) return 'gif';
+    if (mime.contains('webp')) return 'webp';
+    return 'jpg';
+  }
+
   /// Contact matching [numberText] (dialed or caller number), or null.
   Contact? contactForNumber(String numberText) {
     final canon = canonicalNumber(numberText, ownArea: _ownArea);
@@ -184,8 +407,9 @@ class AppState extends ChangeNotifier {
     await _contacts.ensureLoaded();
     await _history.ensureLoaded();
     await _voicemail.ensureLoaded();
+    await _dm.ensureLoaded();
     log('AppState: phonebook loaded '
-        '(${contacts.length} contacts, ${callHistory.length} calls, ${voicemail.length} voicemails)');
+        '(${contacts.length} contacts, ${callHistory.length} calls, ${voicemail.length} voicemails, ${_dm.items.length} messages)');
     notifyListeners();
   }
 
@@ -641,6 +865,8 @@ class AppState extends ChangeNotifier {
     _signaling.onVoicemailList = _onVoicemailList;
     _signaling.onVoicemailAudio = _onVoicemailAudio;
     _signaling.onVoicemailEvent = _onVoicemailEvent;
+    _signaling.onDmEvent = _onDmEvent;
+    _signaling.onDmAttachment = _onDmAttachment;
   }
 
   Future<void> makeCall(String destination) async {

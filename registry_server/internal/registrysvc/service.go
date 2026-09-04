@@ -186,6 +186,10 @@ func (s *Server) PushDevice(ctx context.Context, req *pb.PushDeviceRequest) (*em
 		if err := s.push.SendVoicemailNotification(req.Token, req.CallerNumber, req.CallerName); err != nil {
 			return nil, status.Error(codes.Unavailable, err.Error())
 		}
+	case "message":
+		if err := s.push.SendMessageNotification(req.Token, req.CallerNumber, req.CallerName); err != nil {
+			return nil, status.Error(codes.Unavailable, err.Error())
+		}
 	default:
 		if req.CallId == "" {
 			return nil, status.Error(codes.InvalidArgument, "token and call_id are required")

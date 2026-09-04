@@ -74,6 +74,10 @@ class SignalingClient {
   Function(String id, Uint8List oggBytes)? onVoicemailAudio;
   Function(String callerNumber, String callerName, int unread)? onVoicemailEvent;
 
+  // Direct messaging
+  Function(DmEventInfo event)? onDmEvent;
+  Function(String messageId, String name, String mime, String b64)? onDmAttachment;
+
   // Internal state for reconnection
   OcnConnectionState _state = OcnConnectionState.disconnected;
   KSimKeypair? _keypair;
@@ -331,6 +335,20 @@ class SignalingClient {
         v['caller_name'] as String? ?? '',
         v['unread'] as int? ?? 0,
       );
+    } else if (json.containsKey('dm_event')) {
+      onDmEvent?.call(
+        DmEventInfo.fromJson(
+          (json['dm_event'] as Map).cast<String, dynamic>(),
+        ),
+      );
+    } else if (json.containsKey('dm_attachment')) {
+      final v = json['dm_attachment'] as Map<String, dynamic>;
+      onDmAttachment?.call(
+        v['message_id'] as String? ?? '',
+        v['name'] as String? ?? '',
+        v['mime'] as String? ?? '',
+        v['b64'] as String? ?? '',
+      );
     }
   }
 
@@ -510,6 +528,41 @@ class SignalingClient {
 
   void voicemailMarkRead(String id) {
     _send({'voicemail_mark_read': {'id': id}});
+  }
+
+  // ---- Direct messaging ----
+
+  void dmSend({
+    required String to,
+    required String clientId,
+    required String kind,
+    String text = '',
+    String imageName = '',
+    String imageMime = '',
+    String imageB64 = '',
+  }) {
+    _send({
+      'dm_send': {
+        'to': to,
+        'client_id': clientId,
+        'kind': kind,
+        if (text.isNotEmpty) 'text': text,
+        if (kind == 'image' && imageB64.isNotEmpty)
+          'image': {
+            'name': imageName,
+            'mime': imageMime,
+            'b64': imageB64,
+          },
+      },
+    });
+  }
+
+  void dmAck(String messageId) {
+    _send({'dm_ack': {'message_id': messageId}});
+  }
+
+  void dmAttachmentGet(String messageId) {
+    _send({'dm_attachment_get': {'message_id': messageId}});
   }
 
   void ping() {

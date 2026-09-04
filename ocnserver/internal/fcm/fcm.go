@@ -81,3 +81,27 @@ func (c *Client) SendVoicemailNotification(token, callerNumber, callerName strin
 	log.Printf("FCM: sent voicemail notification to %s", token[:20])
 	return nil
 }
+
+// SendMessageNotification sends a data message announcing a new direct message.
+func (c *Client) SendMessageNotification(token, fromNumber, fromName string) error {
+	if c == nil || c.messaging == nil {
+		return fmt.Errorf("FCM client not initialized")
+	}
+	message := &messaging.Message{
+		Token: token,
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+		},
+		Data: map[string]string{
+			"type":          "message",
+			"caller_number": fromNumber,
+			"caller_name":   fromName,
+		},
+	}
+	_, err := c.messaging.Send(context.Background(), message)
+	if err != nil {
+		return fmt.Errorf("failed to send FCM message notification: %w", err)
+	}
+	log.Printf("FCM: sent message notification to %s", token[:20])
+	return nil
+}

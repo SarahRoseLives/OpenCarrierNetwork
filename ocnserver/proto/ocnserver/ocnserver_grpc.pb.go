@@ -25,6 +25,7 @@ const (
 	OCNServerService_CallEnded_FullMethodName            = "/ocn.ocnserver.OCNServerService/CallEnded"
 	OCNServerService_ICECandidateExchange_FullMethodName = "/ocn.ocnserver.OCNServerService/ICECandidateExchange"
 	OCNServerService_BridgeCall_FullMethodName           = "/ocn.ocnserver.OCNServerService/BridgeCall"
+	OCNServerService_DeliverDM_FullMethodName            = "/ocn.ocnserver.OCNServerService/DeliverDM"
 )
 
 // OCNServerServiceClient is the client API for OCNServerService service.
@@ -40,6 +41,8 @@ type OCNServerServiceClient interface {
 	// Bidirectional relay for a cross-server call. The caller's server dials the
 	// callee's server and both exchange CallEvents over the stream.
 	BridgeCall(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CallEvent, CallEvent], error)
+	// Deliver an undelivered direct message to a user hosted on this server.
+	DeliverDM(ctx context.Context, in *DMEnvelope, opts ...grpc.CallOption) (*DMDeliveryResponse, error)
 }
 
 type oCNServerServiceClient struct {
@@ -103,6 +106,16 @@ func (c *oCNServerServiceClient) BridgeCall(ctx context.Context, opts ...grpc.Ca
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type OCNServerService_BridgeCallClient = grpc.BidiStreamingClient[CallEvent, CallEvent]
 
+func (c *oCNServerServiceClient) DeliverDM(ctx context.Context, in *DMEnvelope, opts ...grpc.CallOption) (*DMDeliveryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DMDeliveryResponse)
+	err := c.cc.Invoke(ctx, OCNServerService_DeliverDM_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OCNServerServiceServer is the server API for OCNServerService service.
 // All implementations must embed UnimplementedOCNServerServiceServer
 // for forward compatibility.
@@ -116,6 +129,8 @@ type OCNServerServiceServer interface {
 	// Bidirectional relay for a cross-server call. The caller's server dials the
 	// callee's server and both exchange CallEvents over the stream.
 	BridgeCall(grpc.BidiStreamingServer[CallEvent, CallEvent]) error
+	// Deliver an undelivered direct message to a user hosted on this server.
+	DeliverDM(context.Context, *DMEnvelope) (*DMDeliveryResponse, error)
 	mustEmbedUnimplementedOCNServerServiceServer()
 }
 
@@ -140,6 +155,9 @@ func (UnimplementedOCNServerServiceServer) ICECandidateExchange(context.Context,
 }
 func (UnimplementedOCNServerServiceServer) BridgeCall(grpc.BidiStreamingServer[CallEvent, CallEvent]) error {
 	return status.Error(codes.Unimplemented, "method BridgeCall not implemented")
+}
+func (UnimplementedOCNServerServiceServer) DeliverDM(context.Context, *DMEnvelope) (*DMDeliveryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeliverDM not implemented")
 }
 func (UnimplementedOCNServerServiceServer) mustEmbedUnimplementedOCNServerServiceServer() {}
 func (UnimplementedOCNServerServiceServer) testEmbeddedByValue()                          {}
@@ -241,6 +259,24 @@ func _OCNServerService_BridgeCall_Handler(srv interface{}, stream grpc.ServerStr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type OCNServerService_BridgeCallServer = grpc.BidiStreamingServer[CallEvent, CallEvent]
 
+func _OCNServerService_DeliverDM_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DMEnvelope)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OCNServerServiceServer).DeliverDM(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OCNServerService_DeliverDM_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OCNServerServiceServer).DeliverDM(ctx, req.(*DMEnvelope))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OCNServerService_ServiceDesc is the grpc.ServiceDesc for OCNServerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -263,6 +299,10 @@ var OCNServerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ICECandidateExchange",
 			Handler:    _OCNServerService_ICECandidateExchange_Handler,
+		},
+		{
+			MethodName: "DeliverDM",
+			Handler:    _OCNServerService_DeliverDM_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -16,6 +16,7 @@ import (
 	"github.com/open-carrier-network/ocn/config"
 	"github.com/open-carrier-network/ocn/internal/admin"
 	"github.com/open-carrier-network/ocn/internal/auth"
+	"github.com/open-carrier-network/ocn/internal/dm"
 	"github.com/open-carrier-network/ocn/internal/fcm"
 	"github.com/open-carrier-network/ocn/internal/ksim"
 	"github.com/open-carrier-network/ocn/internal/numbers"
@@ -185,6 +186,18 @@ func main() {
 			vm.OnStored = sigServer.NotifyVoicemailStored
 			sigServer.SetVoicemail(vm)
 			log.Printf("Voicemail enabled (max %s/message)", maxDur)
+		}
+	}
+
+	// Direct messaging: 1:1 text/image relay + offline queue.
+	{
+		dmm := dm.NewManager(db)
+		if err := dmm.EnsureMasterSecret(); err != nil {
+			log.Printf("WARNING: messaging master secret unavailable: %v", err)
+		} else {
+			sigServer.SetDM(dmm)
+			go dmm.RunPruneLoop()
+			log.Printf("Messaging enabled")
 		}
 	}
 

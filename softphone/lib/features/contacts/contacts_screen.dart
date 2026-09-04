@@ -17,6 +17,7 @@ class ContactsScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Contacts')),
       floatingActionButton: FloatingActionButton(
+        heroTag: 'contacts_add',
         tooltip: 'Add contact',
         onPressed: () {
           Navigator.of(context).push(

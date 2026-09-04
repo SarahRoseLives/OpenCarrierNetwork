@@ -8,6 +8,7 @@ import 'features/call/call_screen.dart';
 import 'features/contacts/contacts_screen.dart';
 import 'features/dialer/dialer_screen.dart';
 import 'features/history/history_screen.dart';
+import 'features/messages/messages_screen.dart';
 import 'features/registration/registration_screen.dart';
 import 'features/voicemail/voicemail_screen.dart';
 
@@ -158,6 +159,7 @@ class _MainAppState extends State<MainApp> {
         index: _currentIndex,
         children: const [
           DialerScreen(),
+          MessagesScreen(),
           HistoryScreen(),
           ContactsScreen(),
           VoicemailScreen(),
@@ -171,6 +173,14 @@ class _MainAppState extends State<MainApp> {
         },
         destinations: [
           const NavigationDestination(icon: Icon(Icons.dialpad), label: 'Dialer'),
+          NavigationDestination(
+            icon: Badge(
+              isLabelVisible: appState.dmUnread > 0,
+              label: Text('${appState.dmUnread}'),
+              child: const Icon(Icons.chat_bubble_outline),
+            ),
+            label: 'Messages',
+          ),
           const NavigationDestination(icon: Icon(Icons.history), label: 'History'),
           const NavigationDestination(icon: Icon(Icons.contacts), label: 'Contacts'),
           NavigationDestination(

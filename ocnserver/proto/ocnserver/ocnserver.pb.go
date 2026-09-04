@@ -81,7 +81,228 @@ func (x CallEvent_Type) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CallEvent_Type.Descriptor instead.
 func (CallEvent_Type) EnumDescriptor() ([]byte, []int) {
-	return file_ocnserver_proto_rawDescGZIP(), []int{0, 0}
+	return file_ocnserver_proto_rawDescGZIP(), []int{3, 0}
+}
+
+// A direct message relayed between servers for a recipient on the callee side.
+type DMEnvelope struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MessageId     string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	ClientId      string                 `protobuf:"bytes,2,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	From          string                 `protobuf:"bytes,3,opt,name=from,proto3" json:"from,omitempty"` // canonical full number
+	FromName      string                 `protobuf:"bytes,4,opt,name=from_name,json=fromName,proto3" json:"from_name,omitempty"`
+	To            string                 `protobuf:"bytes,5,opt,name=to,proto3" json:"to,omitempty"`     // canonical full number of the local recipient
+	Kind          string                 `protobuf:"bytes,6,opt,name=kind,proto3" json:"kind,omitempty"` // "text" | "image"
+	Text          string                 `protobuf:"bytes,7,opt,name=text,proto3" json:"text,omitempty"`
+	Image         *DMImage               `protobuf:"bytes,8,opt,name=image,proto3" json:"image,omitempty"`
+	CreatedAt     int64                  `protobuf:"varint,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // unix millis
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DMEnvelope) Reset() {
+	*x = DMEnvelope{}
+	mi := &file_ocnserver_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DMEnvelope) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DMEnvelope) ProtoMessage() {}
+
+func (x *DMEnvelope) ProtoReflect() protoreflect.Message {
+	mi := &file_ocnserver_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DMEnvelope.ProtoReflect.Descriptor instead.
+func (*DMEnvelope) Descriptor() ([]byte, []int) {
+	return file_ocnserver_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *DMEnvelope) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *DMEnvelope) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *DMEnvelope) GetFrom() string {
+	if x != nil {
+		return x.From
+	}
+	return ""
+}
+
+func (x *DMEnvelope) GetFromName() string {
+	if x != nil {
+		return x.FromName
+	}
+	return ""
+}
+
+func (x *DMEnvelope) GetTo() string {
+	if x != nil {
+		return x.To
+	}
+	return ""
+}
+
+func (x *DMEnvelope) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *DMEnvelope) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *DMEnvelope) GetImage() *DMImage {
+	if x != nil {
+		return x.Image
+	}
+	return nil
+}
+
+func (x *DMEnvelope) GetCreatedAt() int64 {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return 0
+}
+
+type DMImage struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Mime          string                 `protobuf:"bytes,2,opt,name=mime,proto3" json:"mime,omitempty"`
+	B64           string                 `protobuf:"bytes,3,opt,name=b64,proto3" json:"b64,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DMImage) Reset() {
+	*x = DMImage{}
+	mi := &file_ocnserver_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DMImage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DMImage) ProtoMessage() {}
+
+func (x *DMImage) ProtoReflect() protoreflect.Message {
+	mi := &file_ocnserver_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DMImage.ProtoReflect.Descriptor instead.
+func (*DMImage) Descriptor() ([]byte, []int) {
+	return file_ocnserver_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *DMImage) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *DMImage) GetMime() string {
+	if x != nil {
+		return x.Mime
+	}
+	return ""
+}
+
+func (x *DMImage) GetB64() string {
+	if x != nil {
+		return x.B64
+	}
+	return ""
+}
+
+type DMDeliveryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	ErrorMessage  string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DMDeliveryResponse) Reset() {
+	*x = DMDeliveryResponse{}
+	mi := &file_ocnserver_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DMDeliveryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DMDeliveryResponse) ProtoMessage() {}
+
+func (x *DMDeliveryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ocnserver_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DMDeliveryResponse.ProtoReflect.Descriptor instead.
+func (*DMDeliveryResponse) Descriptor() ([]byte, []int) {
+	return file_ocnserver_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *DMDeliveryResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *DMDeliveryResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
 }
 
 // Events exchanged over BridgeCall between two OCN servers.
@@ -101,7 +322,7 @@ type CallEvent struct {
 
 func (x *CallEvent) Reset() {
 	*x = CallEvent{}
-	mi := &file_ocnserver_proto_msgTypes[0]
+	mi := &file_ocnserver_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -113,7 +334,7 @@ func (x *CallEvent) String() string {
 func (*CallEvent) ProtoMessage() {}
 
 func (x *CallEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_ocnserver_proto_msgTypes[0]
+	mi := &file_ocnserver_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -126,7 +347,7 @@ func (x *CallEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallEvent.ProtoReflect.Descriptor instead.
 func (*CallEvent) Descriptor() ([]byte, []int) {
-	return file_ocnserver_proto_rawDescGZIP(), []int{0}
+	return file_ocnserver_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CallEvent) GetCallId() string {
@@ -199,7 +420,7 @@ type IncomingCallRequest struct {
 
 func (x *IncomingCallRequest) Reset() {
 	*x = IncomingCallRequest{}
-	mi := &file_ocnserver_proto_msgTypes[1]
+	mi := &file_ocnserver_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -211,7 +432,7 @@ func (x *IncomingCallRequest) String() string {
 func (*IncomingCallRequest) ProtoMessage() {}
 
 func (x *IncomingCallRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ocnserver_proto_msgTypes[1]
+	mi := &file_ocnserver_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -224,7 +445,7 @@ func (x *IncomingCallRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IncomingCallRequest.ProtoReflect.Descriptor instead.
 func (*IncomingCallRequest) Descriptor() ([]byte, []int) {
-	return file_ocnserver_proto_rawDescGZIP(), []int{1}
+	return file_ocnserver_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *IncomingCallRequest) GetCallId() string {
@@ -280,7 +501,7 @@ type IncomingCallResponse struct {
 
 func (x *IncomingCallResponse) Reset() {
 	*x = IncomingCallResponse{}
-	mi := &file_ocnserver_proto_msgTypes[2]
+	mi := &file_ocnserver_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -292,7 +513,7 @@ func (x *IncomingCallResponse) String() string {
 func (*IncomingCallResponse) ProtoMessage() {}
 
 func (x *IncomingCallResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ocnserver_proto_msgTypes[2]
+	mi := &file_ocnserver_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -305,7 +526,7 @@ func (x *IncomingCallResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IncomingCallResponse.ProtoReflect.Descriptor instead.
 func (*IncomingCallResponse) Descriptor() ([]byte, []int) {
-	return file_ocnserver_proto_rawDescGZIP(), []int{2}
+	return file_ocnserver_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *IncomingCallResponse) GetAccepted() bool {
@@ -339,7 +560,7 @@ type CallAnsweredRequest struct {
 
 func (x *CallAnsweredRequest) Reset() {
 	*x = CallAnsweredRequest{}
-	mi := &file_ocnserver_proto_msgTypes[3]
+	mi := &file_ocnserver_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -351,7 +572,7 @@ func (x *CallAnsweredRequest) String() string {
 func (*CallAnsweredRequest) ProtoMessage() {}
 
 func (x *CallAnsweredRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ocnserver_proto_msgTypes[3]
+	mi := &file_ocnserver_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -364,7 +585,7 @@ func (x *CallAnsweredRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallAnsweredRequest.ProtoReflect.Descriptor instead.
 func (*CallAnsweredRequest) Descriptor() ([]byte, []int) {
-	return file_ocnserver_proto_rawDescGZIP(), []int{3}
+	return file_ocnserver_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *CallAnsweredRequest) GetCallId() string {
@@ -390,7 +611,7 @@ type CallAnsweredResponse struct {
 
 func (x *CallAnsweredResponse) Reset() {
 	*x = CallAnsweredResponse{}
-	mi := &file_ocnserver_proto_msgTypes[4]
+	mi := &file_ocnserver_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -402,7 +623,7 @@ func (x *CallAnsweredResponse) String() string {
 func (*CallAnsweredResponse) ProtoMessage() {}
 
 func (x *CallAnsweredResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ocnserver_proto_msgTypes[4]
+	mi := &file_ocnserver_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -415,7 +636,7 @@ func (x *CallAnsweredResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallAnsweredResponse.ProtoReflect.Descriptor instead.
 func (*CallAnsweredResponse) Descriptor() ([]byte, []int) {
-	return file_ocnserver_proto_rawDescGZIP(), []int{4}
+	return file_ocnserver_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *CallAnsweredResponse) GetSuccess() bool {
@@ -435,7 +656,7 @@ type CallEndedRequest struct {
 
 func (x *CallEndedRequest) Reset() {
 	*x = CallEndedRequest{}
-	mi := &file_ocnserver_proto_msgTypes[5]
+	mi := &file_ocnserver_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -447,7 +668,7 @@ func (x *CallEndedRequest) String() string {
 func (*CallEndedRequest) ProtoMessage() {}
 
 func (x *CallEndedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ocnserver_proto_msgTypes[5]
+	mi := &file_ocnserver_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -460,7 +681,7 @@ func (x *CallEndedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallEndedRequest.ProtoReflect.Descriptor instead.
 func (*CallEndedRequest) Descriptor() ([]byte, []int) {
-	return file_ocnserver_proto_rawDescGZIP(), []int{5}
+	return file_ocnserver_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CallEndedRequest) GetCallId() string {
@@ -487,7 +708,7 @@ type ICEExchangeRequest struct {
 
 func (x *ICEExchangeRequest) Reset() {
 	*x = ICEExchangeRequest{}
-	mi := &file_ocnserver_proto_msgTypes[6]
+	mi := &file_ocnserver_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -499,7 +720,7 @@ func (x *ICEExchangeRequest) String() string {
 func (*ICEExchangeRequest) ProtoMessage() {}
 
 func (x *ICEExchangeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ocnserver_proto_msgTypes[6]
+	mi := &file_ocnserver_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -512,7 +733,7 @@ func (x *ICEExchangeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ICEExchangeRequest.ProtoReflect.Descriptor instead.
 func (*ICEExchangeRequest) Descriptor() ([]byte, []int) {
-	return file_ocnserver_proto_rawDescGZIP(), []int{6}
+	return file_ocnserver_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ICEExchangeRequest) GetCallId() string {
@@ -538,7 +759,7 @@ type ICEExchangeResponse struct {
 
 func (x *ICEExchangeResponse) Reset() {
 	*x = ICEExchangeResponse{}
-	mi := &file_ocnserver_proto_msgTypes[7]
+	mi := &file_ocnserver_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -550,7 +771,7 @@ func (x *ICEExchangeResponse) String() string {
 func (*ICEExchangeResponse) ProtoMessage() {}
 
 func (x *ICEExchangeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ocnserver_proto_msgTypes[7]
+	mi := &file_ocnserver_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -563,7 +784,7 @@ func (x *ICEExchangeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ICEExchangeResponse.ProtoReflect.Descriptor instead.
 func (*ICEExchangeResponse) Descriptor() ([]byte, []int) {
-	return file_ocnserver_proto_rawDescGZIP(), []int{7}
+	return file_ocnserver_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ICEExchangeResponse) GetSuccess() bool {
@@ -577,7 +798,27 @@ var File_ocnserver_proto protoreflect.FileDescriptor
 
 const file_ocnserver_proto_rawDesc = "" +
 	"\n" +
-	"\x0focnserver.proto\x12\rocn.ocnserver\x1a\fcommon.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xc6\x03\n" +
+	"\x0focnserver.proto\x12\rocn.ocnserver\x1a\fcommon.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xfe\x01\n" +
+	"\n" +
+	"DMEnvelope\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x01 \x01(\tR\tmessageId\x12\x1b\n" +
+	"\tclient_id\x18\x02 \x01(\tR\bclientId\x12\x12\n" +
+	"\x04from\x18\x03 \x01(\tR\x04from\x12\x1b\n" +
+	"\tfrom_name\x18\x04 \x01(\tR\bfromName\x12\x0e\n" +
+	"\x02to\x18\x05 \x01(\tR\x02to\x12\x12\n" +
+	"\x04kind\x18\x06 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04text\x18\a \x01(\tR\x04text\x12,\n" +
+	"\x05image\x18\b \x01(\v2\x16.ocn.ocnserver.DMImageR\x05image\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\t \x01(\x03R\tcreatedAt\"C\n" +
+	"\aDMImage\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04mime\x18\x02 \x01(\tR\x04mime\x12\x10\n" +
+	"\x03b64\x18\x03 \x01(\tR\x03b64\"U\n" +
+	"\x12DMDeliveryResponse\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\x12#\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"\xc6\x03\n" +
 	"\tCallEvent\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x121\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x1d.ocn.ocnserver.CallEvent.TypeR\x04type\x12<\n" +
@@ -624,14 +865,15 @@ const file_ocnserver_proto_rawDesc = "" +
 	"candidates\x18\x02 \x03(\v2\x18.ocn.common.ICECandidateR\n" +
 	"candidates\"/\n" +
 	"\x13ICEExchangeResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess2\xaf\x03\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess2\xfa\x03\n" +
 	"\x10OCNServerService\x12W\n" +
 	"\fIncomingCall\x12\".ocn.ocnserver.IncomingCallRequest\x1a#.ocn.ocnserver.IncomingCallResponse\x12W\n" +
 	"\fCallAnswered\x12\".ocn.ocnserver.CallAnsweredRequest\x1a#.ocn.ocnserver.CallAnsweredResponse\x12D\n" +
 	"\tCallEnded\x12\x1f.ocn.ocnserver.CallEndedRequest\x1a\x16.google.protobuf.Empty\x12]\n" +
 	"\x14ICECandidateExchange\x12!.ocn.ocnserver.ICEExchangeRequest\x1a\".ocn.ocnserver.ICEExchangeResponse\x12D\n" +
 	"\n" +
-	"BridgeCall\x12\x18.ocn.ocnserver.CallEvent\x1a\x18.ocn.ocnserver.CallEvent(\x010\x01B5Z3github.com/open-carrier-network/ocn/proto/ocnserverb\x06proto3"
+	"BridgeCall\x12\x18.ocn.ocnserver.CallEvent\x1a\x18.ocn.ocnserver.CallEvent(\x010\x01\x12I\n" +
+	"\tDeliverDM\x12\x19.ocn.ocnserver.DMEnvelope\x1a!.ocn.ocnserver.DMDeliveryResponseB5Z3github.com/open-carrier-network/ocn/proto/ocnserverb\x06proto3"
 
 var (
 	file_ocnserver_proto_rawDescOnce sync.Once
@@ -646,51 +888,57 @@ func file_ocnserver_proto_rawDescGZIP() []byte {
 }
 
 var file_ocnserver_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_ocnserver_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_ocnserver_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_ocnserver_proto_goTypes = []any{
 	(CallEvent_Type)(0),          // 0: ocn.ocnserver.CallEvent.Type
-	(*CallEvent)(nil),            // 1: ocn.ocnserver.CallEvent
-	(*IncomingCallRequest)(nil),  // 2: ocn.ocnserver.IncomingCallRequest
-	(*IncomingCallResponse)(nil), // 3: ocn.ocnserver.IncomingCallResponse
-	(*CallAnsweredRequest)(nil),  // 4: ocn.ocnserver.CallAnsweredRequest
-	(*CallAnsweredResponse)(nil), // 5: ocn.ocnserver.CallAnsweredResponse
-	(*CallEndedRequest)(nil),     // 6: ocn.ocnserver.CallEndedRequest
-	(*ICEExchangeRequest)(nil),   // 7: ocn.ocnserver.ICEExchangeRequest
-	(*ICEExchangeResponse)(nil),  // 8: ocn.ocnserver.ICEExchangeResponse
-	(*common.PhoneNumber)(nil),   // 9: ocn.common.PhoneNumber
-	(*common.DisplayName)(nil),   // 10: ocn.common.DisplayName
-	(*common.SDPSession)(nil),    // 11: ocn.common.SDPSession
-	(*common.ICECandidate)(nil),  // 12: ocn.common.ICECandidate
-	(*emptypb.Empty)(nil),        // 13: google.protobuf.Empty
+	(*DMEnvelope)(nil),           // 1: ocn.ocnserver.DMEnvelope
+	(*DMImage)(nil),              // 2: ocn.ocnserver.DMImage
+	(*DMDeliveryResponse)(nil),   // 3: ocn.ocnserver.DMDeliveryResponse
+	(*CallEvent)(nil),            // 4: ocn.ocnserver.CallEvent
+	(*IncomingCallRequest)(nil),  // 5: ocn.ocnserver.IncomingCallRequest
+	(*IncomingCallResponse)(nil), // 6: ocn.ocnserver.IncomingCallResponse
+	(*CallAnsweredRequest)(nil),  // 7: ocn.ocnserver.CallAnsweredRequest
+	(*CallAnsweredResponse)(nil), // 8: ocn.ocnserver.CallAnsweredResponse
+	(*CallEndedRequest)(nil),     // 9: ocn.ocnserver.CallEndedRequest
+	(*ICEExchangeRequest)(nil),   // 10: ocn.ocnserver.ICEExchangeRequest
+	(*ICEExchangeResponse)(nil),  // 11: ocn.ocnserver.ICEExchangeResponse
+	(*common.PhoneNumber)(nil),   // 12: ocn.common.PhoneNumber
+	(*common.DisplayName)(nil),   // 13: ocn.common.DisplayName
+	(*common.SDPSession)(nil),    // 14: ocn.common.SDPSession
+	(*common.ICECandidate)(nil),  // 15: ocn.common.ICECandidate
+	(*emptypb.Empty)(nil),        // 16: google.protobuf.Empty
 }
 var file_ocnserver_proto_depIdxs = []int32{
-	0,  // 0: ocn.ocnserver.CallEvent.type:type_name -> ocn.ocnserver.CallEvent.Type
-	9,  // 1: ocn.ocnserver.CallEvent.caller_number:type_name -> ocn.common.PhoneNumber
-	10, // 2: ocn.ocnserver.CallEvent.caller_name:type_name -> ocn.common.DisplayName
-	11, // 3: ocn.ocnserver.CallEvent.sdp:type_name -> ocn.common.SDPSession
-	12, // 4: ocn.ocnserver.CallEvent.candidate:type_name -> ocn.common.ICECandidate
-	9,  // 5: ocn.ocnserver.IncomingCallRequest.caller_number:type_name -> ocn.common.PhoneNumber
-	10, // 6: ocn.ocnserver.IncomingCallRequest.caller_name:type_name -> ocn.common.DisplayName
-	9,  // 7: ocn.ocnserver.IncomingCallRequest.destination_number:type_name -> ocn.common.PhoneNumber
-	11, // 8: ocn.ocnserver.IncomingCallRequest.offer:type_name -> ocn.common.SDPSession
-	11, // 9: ocn.ocnserver.IncomingCallResponse.answer:type_name -> ocn.common.SDPSession
-	11, // 10: ocn.ocnserver.CallAnsweredRequest.answer:type_name -> ocn.common.SDPSession
-	12, // 11: ocn.ocnserver.ICEExchangeRequest.candidates:type_name -> ocn.common.ICECandidate
-	2,  // 12: ocn.ocnserver.OCNServerService.IncomingCall:input_type -> ocn.ocnserver.IncomingCallRequest
-	4,  // 13: ocn.ocnserver.OCNServerService.CallAnswered:input_type -> ocn.ocnserver.CallAnsweredRequest
-	6,  // 14: ocn.ocnserver.OCNServerService.CallEnded:input_type -> ocn.ocnserver.CallEndedRequest
-	7,  // 15: ocn.ocnserver.OCNServerService.ICECandidateExchange:input_type -> ocn.ocnserver.ICEExchangeRequest
-	1,  // 16: ocn.ocnserver.OCNServerService.BridgeCall:input_type -> ocn.ocnserver.CallEvent
-	3,  // 17: ocn.ocnserver.OCNServerService.IncomingCall:output_type -> ocn.ocnserver.IncomingCallResponse
-	5,  // 18: ocn.ocnserver.OCNServerService.CallAnswered:output_type -> ocn.ocnserver.CallAnsweredResponse
-	13, // 19: ocn.ocnserver.OCNServerService.CallEnded:output_type -> google.protobuf.Empty
-	8,  // 20: ocn.ocnserver.OCNServerService.ICECandidateExchange:output_type -> ocn.ocnserver.ICEExchangeResponse
-	1,  // 21: ocn.ocnserver.OCNServerService.BridgeCall:output_type -> ocn.ocnserver.CallEvent
-	17, // [17:22] is the sub-list for method output_type
-	12, // [12:17] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	2,  // 0: ocn.ocnserver.DMEnvelope.image:type_name -> ocn.ocnserver.DMImage
+	0,  // 1: ocn.ocnserver.CallEvent.type:type_name -> ocn.ocnserver.CallEvent.Type
+	12, // 2: ocn.ocnserver.CallEvent.caller_number:type_name -> ocn.common.PhoneNumber
+	13, // 3: ocn.ocnserver.CallEvent.caller_name:type_name -> ocn.common.DisplayName
+	14, // 4: ocn.ocnserver.CallEvent.sdp:type_name -> ocn.common.SDPSession
+	15, // 5: ocn.ocnserver.CallEvent.candidate:type_name -> ocn.common.ICECandidate
+	12, // 6: ocn.ocnserver.IncomingCallRequest.caller_number:type_name -> ocn.common.PhoneNumber
+	13, // 7: ocn.ocnserver.IncomingCallRequest.caller_name:type_name -> ocn.common.DisplayName
+	12, // 8: ocn.ocnserver.IncomingCallRequest.destination_number:type_name -> ocn.common.PhoneNumber
+	14, // 9: ocn.ocnserver.IncomingCallRequest.offer:type_name -> ocn.common.SDPSession
+	14, // 10: ocn.ocnserver.IncomingCallResponse.answer:type_name -> ocn.common.SDPSession
+	14, // 11: ocn.ocnserver.CallAnsweredRequest.answer:type_name -> ocn.common.SDPSession
+	15, // 12: ocn.ocnserver.ICEExchangeRequest.candidates:type_name -> ocn.common.ICECandidate
+	5,  // 13: ocn.ocnserver.OCNServerService.IncomingCall:input_type -> ocn.ocnserver.IncomingCallRequest
+	7,  // 14: ocn.ocnserver.OCNServerService.CallAnswered:input_type -> ocn.ocnserver.CallAnsweredRequest
+	9,  // 15: ocn.ocnserver.OCNServerService.CallEnded:input_type -> ocn.ocnserver.CallEndedRequest
+	10, // 16: ocn.ocnserver.OCNServerService.ICECandidateExchange:input_type -> ocn.ocnserver.ICEExchangeRequest
+	4,  // 17: ocn.ocnserver.OCNServerService.BridgeCall:input_type -> ocn.ocnserver.CallEvent
+	1,  // 18: ocn.ocnserver.OCNServerService.DeliverDM:input_type -> ocn.ocnserver.DMEnvelope
+	6,  // 19: ocn.ocnserver.OCNServerService.IncomingCall:output_type -> ocn.ocnserver.IncomingCallResponse
+	8,  // 20: ocn.ocnserver.OCNServerService.CallAnswered:output_type -> ocn.ocnserver.CallAnsweredResponse
+	16, // 21: ocn.ocnserver.OCNServerService.CallEnded:output_type -> google.protobuf.Empty
+	11, // 22: ocn.ocnserver.OCNServerService.ICECandidateExchange:output_type -> ocn.ocnserver.ICEExchangeResponse
+	4,  // 23: ocn.ocnserver.OCNServerService.BridgeCall:output_type -> ocn.ocnserver.CallEvent
+	3,  // 24: ocn.ocnserver.OCNServerService.DeliverDM:output_type -> ocn.ocnserver.DMDeliveryResponse
+	19, // [19:25] is the sub-list for method output_type
+	13, // [13:19] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_ocnserver_proto_init() }
@@ -704,7 +952,7 @@ func file_ocnserver_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ocnserver_proto_rawDesc), len(file_ocnserver_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   8,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

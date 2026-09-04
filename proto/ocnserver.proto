@@ -17,6 +17,33 @@ service OCNServerService {
   // Bidirectional relay for a cross-server call. The caller's server dials the
   // callee's server and both exchange CallEvents over the stream.
   rpc BridgeCall(stream CallEvent) returns (stream CallEvent);
+
+  // Deliver an undelivered direct message to a user hosted on this server.
+  rpc DeliverDM(DMEnvelope) returns (DMDeliveryResponse);
+}
+
+// A direct message relayed between servers for a recipient on the callee side.
+message DMEnvelope {
+  string message_id = 1;
+  string client_id = 2;
+  string from = 3;      // canonical full number
+  string from_name = 4;
+  string to = 5;        // canonical full number of the local recipient
+  string kind = 6;      // "text" | "image"
+  string text = 7;
+  DMImage image = 8;
+  int64 created_at = 9; // unix millis
+}
+
+message DMImage {
+  string name = 1;
+  string mime = 2;
+  string b64 = 3;
+}
+
+message DMDeliveryResponse {
+  bool accepted = 1;
+  string error_message = 2;
 }
 
 // Events exchanged over BridgeCall between two OCN servers.

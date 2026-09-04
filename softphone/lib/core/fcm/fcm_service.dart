@@ -160,6 +160,12 @@ class FCMService {
 
   static void _handleMessageData(Map<String, dynamic> data) {
     final type = data['type'] as String?;
+    if (type == 'message') {
+      // While the app is foregrounded the server delivers over the WebSocket
+      // (which shows its own notification); nothing to do here.
+      log('FCM: message (foreground) from ${data['caller_number']}');
+      return;
+    }
     if (type == 'voicemail') {
       final callerNumber = data['caller_number'] as String? ?? '';
       final callerName = data['caller_name'] as String? ?? '';
@@ -216,6 +222,13 @@ Future<void> _handleBackgroundMessage(RemoteMessage message) async {
   final callerNumber = message.data['caller_number'] as String? ?? '';
   final callerName = message.data['caller_name'] as String? ?? '';
 
+  if (type == 'message') {
+    await CallNotifications.showMessage(
+      fromNumber: callerNumber,
+      fromName: callerName,
+    );
+    return;
+  }
   if (type == 'voicemail') {
     await CallNotifications.showVoicemail(
       callerNumber: callerNumber,

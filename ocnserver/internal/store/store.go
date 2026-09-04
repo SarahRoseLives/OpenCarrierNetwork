@@ -108,6 +108,13 @@ func (s *Store) migrate() error {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS dm_outbox (
+			message_id TEXT PRIMARY KEY,
+			recipient TEXT NOT NULL,
+			envelope BLOB NOT NULL,
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_dm_outbox_recipient ON dm_outbox(recipient, created_at)`,
 	}
 
 	for _, m := range migrations {

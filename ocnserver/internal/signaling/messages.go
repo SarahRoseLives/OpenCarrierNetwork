@@ -21,6 +21,11 @@ type ClientMessage struct {
 	VoicemailGet      *VoicemailGetReq      `json:"voicemail_get,omitempty"`
 	VoicemailDelete   *VoicemailDeleteReq   `json:"voicemail_delete,omitempty"`
 	VoicemailMarkRead *VoicemailMarkReadReq `json:"voicemail_mark_read,omitempty"`
+
+	// Direct messaging
+	DMSend          *DMSend          `json:"dm_send,omitempty"`
+	DMAck           *DMAck           `json:"dm_ack,omitempty"`
+	DMAttachmentGet *DMAttachmentGet `json:"dm_attachment_get,omitempty"`
 }
 
 // ServerMessage represents a message from exchange to client
@@ -39,6 +44,10 @@ type ServerMessage struct {
 	VoicemailListResponse *VoicemailListResponse `json:"voicemail_list_response,omitempty"`
 	VoicemailGetResponse  *VoicemailGetResponse  `json:"voicemail_get_response,omitempty"`
 	VoicemailEvent        *VoicemailEvent        `json:"voicemail_event,omitempty"`
+
+	// Direct messaging responses / events
+	DMEvent      *DMEvent      `json:"dm_event,omitempty"`
+	DMAttachment *DMAttachment `json:"dm_attachment,omitempty"`
 }
 
 type ChallengeRequest struct {
@@ -173,6 +182,59 @@ type VoicemailEvent struct {
 	CallerNumber string `json:"caller_number"`
 	CallerName   string `json:"caller_name"`
 	Unread       int    `json:"unread"`
+}
+
+// ---- Direct messaging ----
+
+// DMImageReq is an inline image attachment being sent.
+type DMImageReq struct {
+	Name string `json:"name"`
+	Mime string `json:"mime"`
+	B64  string `json:"b64"`
+}
+
+// DMSend asks the server to deliver a 1:1 message to To (canonical number).
+type DMSend struct {
+	To       string      `json:"to"`
+	ClientID string      `json:"client_id,omitempty"`
+	Kind     string      `json:"kind"` // "text" | "image"
+	Text     string      `json:"text,omitempty"`
+	Image    *DMImageReq `json:"image,omitempty"`
+}
+
+// DMAck confirms a delivered message was received; the server drops its
+// outbox copy.
+type DMAck struct {
+	MessageID string `json:"message_id"`
+}
+
+// DMAttachmentGet requests the bytes of an image message.
+type DMAttachmentGet struct {
+	MessageID string `json:"message_id"`
+}
+
+// DMEvent is pushed to a device. Type "new" is an inbound message; type
+// "status" acknowledges an outbound message reached the network.
+type DMEvent struct {
+	Type      string `json:"type"` // "new" | "status"
+	MessageID string `json:"message_id"`
+	ClientID  string `json:"client_id,omitempty"`
+	Status    string `json:"status,omitempty"` // "delivered"
+	From      string `json:"from,omitempty"`
+	FromName  string `json:"from_name,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Text      string `json:"text,omitempty"`
+	ImageName string `json:"image_name,omitempty"`
+	ImageMime string `json:"image_mime,omitempty"`
+	CreatedAt int64  `json:"created_at,omitempty"` // unix millis
+}
+
+// DMAttachment is the payload reply to DMAttachmentGet.
+type DMAttachment struct {
+	MessageID string `json:"message_id"`
+	Name      string `json:"name"`
+	Mime      string `json:"mime"`
+	B64       string `json:"b64"`
 }
 
 type Error struct {

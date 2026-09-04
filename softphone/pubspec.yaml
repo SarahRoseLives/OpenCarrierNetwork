@@ -47,6 +47,7 @@ dependencies:
   audioplayers: ^6.7.1
   mobile_scanner: ^7.4.0
   app_links: ^7.0.0
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_test:

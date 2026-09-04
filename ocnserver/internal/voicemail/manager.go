@@ -11,11 +11,6 @@ import (
 	"github.com/open-carrier-network/ocn/internal/store"
 )
 
-const (
-	// MasterSecretKey is the settings key holding the voicemail master secret.
-	MasterSecretKey = "voicemail_master_secret"
-)
-
 // Manager coordinates voicemail storage for a server: it owns the master
 // secret, encrypts/decrypts messages, and knows how to render them.
 type Manager struct {

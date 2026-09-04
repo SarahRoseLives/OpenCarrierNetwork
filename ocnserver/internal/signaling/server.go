@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/open-carrier-network/ocn/internal/auth"
+	"github.com/open-carrier-network/ocn/internal/dm"
 	"github.com/open-carrier-network/ocn/internal/numbers"
 	"github.com/open-carrier-network/ocn/internal/push"
 	"github.com/open-carrier-network/ocn/internal/services"
@@ -59,6 +62,9 @@ type Server struct {
 
 	// Voicemail (nil when disabled/unconfigured)
 	vm *voicemail.Manager
+
+	// Direct messaging (nil when disabled/unconfigured)
+	dmm *dm.Manager
 
 	// ringStates tracks calls that are ringing an online callee so a
 	// no-answer timer (or a decline/disconnect) can redirect to voicemail.
@@ -140,6 +146,19 @@ func (srv *Server) voicemailManager() *voicemail.Manager {
 	srv.mu.RLock()
 	defer srv.mu.RUnlock()
 	return srv.vm
+}
+
+// SetDM attaches (or detaches, with nil) the direct-messaging manager.
+func (srv *Server) SetDM(m *dm.Manager) {
+	srv.mu.Lock()
+	srv.dmm = m
+	srv.mu.Unlock()
+}
+
+func (srv *Server) dmManager() *dm.Manager {
+	srv.mu.RLock()
+	defer srv.mu.RUnlock()
+	return srv.dmm
 }
 
 // SetRegistry attaches a registry client so cross-server calls can be routed.
@@ -308,6 +327,12 @@ func (srv *Server) handleMessage(client *Client, msg *ClientMessage) {
 		srv.handleVoicemailDelete(client, msg.VoicemailDelete)
 	case msg.VoicemailMarkRead != nil:
 		srv.handleVoicemailMarkRead(client, msg.VoicemailMarkRead)
+	case msg.DMSend != nil:
+		srv.handleDMSend(client, msg.DMSend)
+	case msg.DMAck != nil:
+		srv.handleDMAck(client, msg.DMAck)
+	case msg.DMAttachmentGet != nil:
+		srv.handleDMAttachmentGet(client, msg.DMAttachmentGet)
 	default:
 		log.Printf("Received unknown message type")
 		srv.sendError(client, 400, "unknown message type")
@@ -434,6 +459,8 @@ func (srv *Server) handleRegister(client *Client, msg *RegisterRequest) {
 
 	// Deliver any call that arrived while this user was offline (FCM wake-up)
 	srv.deliverPendingCall(client)
+	// Deliver any messages queued while offline (kept until the device acks).
+	srv.flushPendingDM(client)
 }
 
 func (srv *Server) handleRegisterFCM(client *Client, msg *RegisterFCM) {
@@ -1124,6 +1151,221 @@ func (srv *Server) handleVoicemailMarkRead(client *Client, req *VoicemailMarkRea
 	}
 	if err := srv.store.MarkListened(req.ID, client.user.Number); err != nil {
 		log.Printf("voicemail mark read error: %v", err)
+	}
+}
+
+// ---- Direct messaging ----
+
+func (srv *Server) handleDMSend(client *Client, req *DMSend) {
+	if client.user == nil {
+		srv.sendError(client, 401, "not registered")
+		return
+	}
+	if req == nil || req.To == "" {
+		srv.sendError(client, 400, "missing destination")
+		return
+	}
+	if req.Kind != "text" && req.Kind != "image" {
+		srv.sendError(client, 400, "invalid message kind")
+		return
+	}
+	if req.Kind == "text" && strings.TrimSpace(req.Text) == "" {
+		srv.sendError(client, 400, "empty message")
+		return
+	}
+	if req.Kind == "image" && (req.Image == nil || req.Image.B64 == "") {
+		srv.sendError(client, 400, "missing image data")
+		return
+	}
+	if req.Kind == "image" && len(req.Image.B64) > (dm.MaxImageBytes*4/3)+8 {
+		srv.sendError(client, 413, "image too large")
+		return
+	}
+
+	area, local, err := numbers.ParseNumber(req.To, srv.area())
+	if err != nil {
+		srv.sendError(client, 400, "invalid destination: "+err.Error())
+		return
+	}
+	mgr := srv.dmManager()
+	if mgr == nil {
+		srv.sendError(client, 503, "messaging unavailable")
+		return
+	}
+
+	env := &dm.Envelope{
+		MessageID: uuid.NewString(),
+		ClientID:  req.ClientID,
+		From:      dm.Canonical(client.user.AreaCode, client.user.Number),
+		FromName:  client.user.DisplayName,
+		To:        dm.Canonical(area, local),
+		Kind:      req.Kind,
+		Text:      req.Text,
+		CreatedAt: time.Now().UnixMilli(),
+	}
+	if req.Image != nil {
+		env.Image = &dm.Image{Name: req.Image.Name, Mime: req.Image.Mime, B64: req.Image.B64}
+	}
+
+	// Remote recipient: relay to their home server over the federation link.
+	if srv.area() != "" && area != srv.area() {
+		if !srv.sendRemoteDM(client, env, area) {
+			return
+		}
+		srv.sendMessage(client, &ServerMessage{DMEvent: &DMEvent{
+			Type: "status", MessageID: env.MessageID, ClientID: req.ClientID, Status: "delivered",
+		}})
+		return
+	}
+
+	callee, err := srv.store.GetUserByNumber(local)
+	if err != nil {
+		log.Printf("dm_send: lookup error: %v", err)
+		srv.sendError(client, 500, "database error")
+		return
+	}
+	if callee == nil {
+		srv.sendError(client, 404, "user not found")
+		return
+	}
+
+	// Authoritative outbox copy; dropped when the device acks.
+	if _, err := mgr.Enqueue(local, env); err != nil {
+		log.Printf("dm_send: enqueue failed: %v", err)
+		srv.sendError(client, 500, "failed to send")
+		return
+	}
+
+	if srv.relayDMMessage(local, env) {
+		log.Printf("dm_send: relayed %s to online %s", env.MessageID, local)
+	} else if callee.FCMToken != "" {
+		p := srv.pushSender()
+		if p != nil {
+			if err := p.SendMessageNotification(callee.FCMToken, env.From, env.FromName); err != nil {
+				log.Printf("dm_send: push failed: %v", err)
+			}
+		}
+	}
+
+	// Acknowledge delivery to the network.
+	srv.sendMessage(client, &ServerMessage{DMEvent: &DMEvent{
+		Type: "status", MessageID: env.MessageID, ClientID: req.ClientID, Status: "delivered",
+	}})
+}
+
+// sendRemoteDM relays an envelope to the home server for a remote area.
+// Returns true when accepted.
+func (srv *Server) sendRemoteDM(client *Client, env *dm.Envelope, area string) bool {
+	reg := srv.registry()
+	if reg == nil {
+		srv.sendError(client, 501, "cross-server messaging requires federation")
+		return false
+	}
+	routeCtx, rcancel := context.WithTimeout(context.Background(), 15*time.Second)
+	addr, err := reg.Route(routeCtx, area)
+	rcancel()
+	if err != nil {
+		log.Printf("dm_send: no route for area %s: %v", area, err)
+		srv.sendError(client, 404, "number unreachable (no route)")
+		return false
+	}
+	conn, err := srv.bridgeConn(addr, srv.fedInsecure())
+	if err != nil {
+		log.Printf("dm_send: dial %s: %v", addr, err)
+		srv.sendError(client, 502, "delivery failed")
+		return false
+	}
+	cli := ocnserverpb.NewOCNServerServiceClient(conn)
+	dmCtx, dcancel := context.WithTimeout(context.Background(), 20*time.Second)
+	resp, err := cli.DeliverDM(dmCtx, dmEnvelopeToProto(env))
+	dcancel()
+	if err != nil {
+		log.Printf("dm_send: DeliverDM to %s failed: %v", addr, err)
+		srv.sendError(client, 502, "delivery failed")
+		return false
+	}
+	if !resp.GetAccepted() {
+		log.Printf("dm_send: remote rejected: %s", resp.GetErrorMessage())
+		srv.sendError(client, 404, "delivery failed: "+resp.GetErrorMessage())
+		return false
+	}
+	log.Printf("dm_send: relayed %s to area %s via %s", env.MessageID, area, addr)
+	return true
+}
+
+func (srv *Server) handleDMAck(client *Client, req *DMAck) {
+	if client.user == nil || req == nil || req.MessageID == "" {
+		return
+	}
+	if mgr := srv.dmManager(); mgr != nil {
+		if err := mgr.Remove(req.MessageID, client.user.Number); err != nil {
+			log.Printf("dm_ack: remove failed: %v", err)
+		}
+	}
+}
+
+func (srv *Server) handleDMAttachmentGet(client *Client, req *DMAttachmentGet) {
+	if client.user == nil || req == nil {
+		return
+	}
+	mgr := srv.dmManager()
+	if mgr == nil {
+		srv.sendError(client, 503, "messaging unavailable")
+		return
+	}
+	env, err := mgr.Get(req.MessageID, client.user.Number)
+	if err != nil || env == nil || env.Image == nil {
+		srv.sendError(client, 404, "attachment not found")
+		return
+	}
+	srv.sendMessage(client, &ServerMessage{DMAttachment: &DMAttachment{
+		MessageID: req.MessageID,
+		Name:      env.Image.Name,
+		Mime:      env.Image.Mime,
+		B64:       env.Image.B64,
+	}})
+}
+
+// relayDMMessage pushes an inbound envelope to an online recipient as a
+// "new" event (image bytes are fetched separately). Returns whether it was
+// relayed.
+func (srv *Server) relayDMMessage(recipientLocal string, env *dm.Envelope) bool {
+	srv.mu.RLock()
+	c, ok := srv.clients[recipientLocal]
+	srv.mu.RUnlock()
+	if !ok || c == nil {
+		return false
+	}
+	ev := &DMEvent{
+		Type: "new", MessageID: env.MessageID,
+		From: env.From, FromName: env.FromName,
+		Kind: env.Kind, Text: env.Text, CreatedAt: env.CreatedAt,
+	}
+	if env.Image != nil {
+		ev.ImageName = env.Image.Name
+		ev.ImageMime = env.Image.Mime
+	}
+	srv.sendMessage(c, &ServerMessage{DMEvent: ev})
+	return true
+}
+
+// flushPendingDM delivers any queued messages to a freshly-registered client
+// (they stay queued until the device acks, so a lost frame re-delivers later).
+func (srv *Server) flushPendingDM(client *Client) {
+	mgr := srv.dmManager()
+	if mgr == nil || client == nil || client.user == nil {
+		return
+	}
+	envs, err := mgr.Pending(client.user.Number)
+	if err != nil {
+		log.Printf("dm flush error for %s: %v", client.user.Number, err)
+		return
+	}
+	for _, env := range envs {
+		srv.relayDMMessage(client.user.Number, env)
+	}
+	if len(envs) > 0 {
+		log.Printf("dm: flushed %d queued message(s) to %s", len(envs), client.user.Number)
 	}
 }
 

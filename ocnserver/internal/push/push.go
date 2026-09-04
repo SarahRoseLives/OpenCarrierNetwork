@@ -10,4 +10,7 @@ type Sender interface {
 	// SendVoicemailNotification notifies a device that a new voicemail is
 	// waiting from callerNumber/callerName.
 	SendVoicemailNotification(token, callerNumber, callerName string) error
+	// SendMessageNotification notifies a device of a new direct message from
+	// fromNumber/fromName.
+	SendMessageNotification(token, fromNumber, fromName string) error
 }
