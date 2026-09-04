@@ -11,6 +11,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,22 +36,23 @@ var webFS embed.FS
 
 func main() {
 	var (
-		httpAddr  = flag.String("http-addr", ":80", "HTTP listen (redirect + ACME)")
-		httpsAddr = flag.String("https-addr", ":443", "HTTPS listen (website)")
-		grpcAddr  = flag.String("grpc-addr", ":7443", "gRPC listen (TLS)")
-		domain    = flag.String("domain", "opencarrier.network", "primary domain")
-		email     = flag.String("email", "sarahroselives@protonmail.com", "Let's Encrypt contact email")
-		cacheDir  = flag.String("cache-dir", "", "autocert cache dir (default ./certs)")
-		dbPath    = flag.String("db", "registry.db", "SQLite database path")
-		fcmCreds  = flag.String("fcm-creds", "", "path to Firebase service account JSON (official shared project)")
-		stunList  = flag.String("stun", "stun.l.google.com:19302", "comma-separated STUN list returned to clients")
-		plaintext = flag.Bool("plaintext", false, "dev mode: no TLS/ACME")
-		turnUDP   = flag.String("turn-udp", ":3478", "TURN UDP listen")
-		turnTCP   = flag.String("turn-tcp", ":3478", "TURN TCP listen")
-		turnIP    = flag.String("turn-public-ip", "", "public IP the TURN relay advertises (required to enable TURN)")
-		turnUser  = flag.String("turn-username", "ocn", "TURN long-term credential username")
-		turnPass  = flag.String("turn-password", "", "TURN long-term credential password")
-		turnHost  = flag.String("turn-host", "", "advertised TURN host:port (default <domain>:3478)")
+		httpAddr   = flag.String("http-addr", ":80", "HTTP listen (redirect + ACME)")
+		httpsAddr  = flag.String("https-addr", ":443", "HTTPS listen (website)")
+		grpcAddr   = flag.String("grpc-addr", ":7443", "gRPC listen (TLS)")
+		domain     = flag.String("domain", "opencarrier.network", "primary domain")
+		email      = flag.String("email", "sarahroselives@protonmail.com", "Let's Encrypt contact email")
+		cacheDir   = flag.String("cache-dir", "", "autocert cache dir (default ./certs)")
+		dbPath     = flag.String("db", "registry.db", "SQLite database path")
+		joinTarget = flag.String("join-target", "http://127.0.0.1:8080", "exchange to proxy /join to (get-a-number)")
+		fcmCreds   = flag.String("fcm-creds", "", "path to Firebase service account JSON (official shared project)")
+		stunList   = flag.String("stun", "stun.l.google.com:19302", "comma-separated STUN list returned to clients")
+		plaintext  = flag.Bool("plaintext", false, "dev mode: no TLS/ACME")
+		turnUDP    = flag.String("turn-udp", ":3478", "TURN UDP listen")
+		turnTCP    = flag.String("turn-tcp", ":3478", "TURN TCP listen")
+		turnIP     = flag.String("turn-public-ip", "", "public IP the TURN relay advertises (required to enable TURN)")
+		turnUser   = flag.String("turn-username", "ocn", "TURN long-term credential username")
+		turnPass   = flag.String("turn-password", "", "TURN long-term credential password")
+		turnHost   = flag.String("turn-host", "", "advertised TURN host:port (default <domain>:3478)")
 	)
 	flag.Parse()
 
@@ -126,7 +129,7 @@ func main() {
 		}
 		go func() { log.Fatalf("grpc: %v", grpcSrv.Serve(gl)) }()
 		log.Printf("gRPC (plaintext) on %s; website on %s", *grpcAddr, *httpAddr)
-		if err := http.ListenAndServe(*httpAddr, webMux(adminHandler)); err != nil {
+		if err := http.ListenAndServe(*httpAddr, webMux(adminHandler, *joinTarget)); err != nil {
 			log.Fatalf("http: %v", err)
 		}
 		return
@@ -167,7 +170,7 @@ func main() {
 	}()
 
 	// --- Website (HTTPS :443) ---
-	webHandler := webMux(adminHandler)
+	webHandler := webMux(adminHandler, *joinTarget)
 	site := &http.Server{
 		Addr:              *httpsAddr,
 		Handler:           webHandler,
@@ -201,10 +204,19 @@ func redirectHTTPS(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "https://"+host+r.URL.RequestURI(), http.StatusMovedPermanently)
 }
 
-func webMux(admin http.Handler) http.Handler {
+func webMux(admin http.Handler, joinTarget string) http.Handler {
 	mux := http.NewServeMux()
 	if admin != nil {
 		mux.Handle("/admin/", admin)
+	}
+	// Proxy the "get a number" self-service page to the operator's co-located
+	// exchange (default 440), so it's served over this HTTPS origin while the
+	// exchange itself owns provisioning.
+	if joinTarget != "" {
+		if u, err := url.Parse(joinTarget); err == nil {
+			rp := httputil.NewSingleHostReverseProxy(u)
+			mux.Handle("/join", rp)
+		}
 	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

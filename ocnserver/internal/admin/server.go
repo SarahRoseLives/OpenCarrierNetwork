@@ -70,6 +70,10 @@ func (s *Server) routes() {
 	staticSub, _ := fs.Sub(staticFS, "static")
 	s.mux.Handle("GET /", http.FileServer(http.FS(staticSub)))
 
+	// Public self-service "get a number" (not behind auth).
+	s.mux.HandleFunc("GET /join", s.handleJoinPage)
+	s.mux.HandleFunc("POST /join", s.handleJoinMint)
+
 	// Auth
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/logout", s.requireAuth(s.handleLogout))
