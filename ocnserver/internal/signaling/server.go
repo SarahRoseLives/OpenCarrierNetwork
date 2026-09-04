@@ -627,6 +627,11 @@ func (srv *Server) handleServiceCall(client *Client, msg *CallRequest) {
 	callID := generateCallID()
 	log.Printf("Service call %s to %s (%s)", callID, msg.Destination, svc.Name())
 
+	// Some services (e.g. *02) announce the caller's own number.
+	if ca, ok := svc.(services.CallerAware); ok {
+		ca.SetCaller(callID, numbers.FormatNumber(client.user.AreaCode, client.user.Number))
+	}
+
 	// Convert SDP
 	offer := &webrtc.SessionDescription{
 		Type: webrtc.SDPTypeOffer,

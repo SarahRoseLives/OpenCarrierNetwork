@@ -154,6 +154,12 @@ func main() {
 	}
 	serviceRegistry.Register(echoService)
 
+	numSvc, err := services.NewNumberAnnounceService(tts)
+	if err != nil {
+		log.Fatalf("Failed to create number announce service: %v", err)
+	}
+	serviceRegistry.Register(numSvc)
+
 	// Initialize FCM push: local creds if given, otherwise registry push.
 	var fcmClient *fcm.Client
 	if *fcmCreds != "" {
@@ -306,7 +312,7 @@ func main() {
 	log.Printf("  WebSocket: ws://%s/ws", addr)
 	log.Printf("  Health:    http://%s/health", addr)
 	log.Printf("  Admin:     http://%s/  (default login admin/admin)", cfg.AdminAddress())
-	log.Printf("  Services:  *01 Echo Test")
+	log.Printf("  Services:  *01 Echo Test, *02 My Number")
 	if pusher != nil {
 		log.Printf("  Push:      enabled (%T)", pusher)
 	}

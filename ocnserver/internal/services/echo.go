@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,7 +17,9 @@ type EchoService struct {
 	name   string
 	phrase string
 	echo   bool
+	whoami bool
 	calls  map[string]*echoCall
+	caller map[string]string // callID -> caller's full number (whoami mode)
 	mu     sync.RWMutex
 }
 
@@ -34,6 +37,21 @@ func NewEchoService(tts *TTS) (*EchoService, error) {
 		phrase: "Welcome to OpenCarrier Network's Echo Service",
 		echo:   true,
 		calls:  make(map[string]*echoCall),
+		caller: make(map[string]string),
+	}, nil
+}
+
+// NewNumberAnnounceService returns the *02 service, which tells a caller their
+// own OCN number.
+func NewNumberAnnounceService(tts *TTS) (*EchoService, error) {
+	return &EchoService{
+		tts:    tts,
+		code:   "*02",
+		name:   "My Number",
+		phrase: "Welcome to OpenCarrier Network",
+		whoami: true,
+		calls:  make(map[string]*echoCall),
+		caller: make(map[string]string),
 	}, nil
 }
 
@@ -45,13 +63,36 @@ func NewAnnouncementService(tts *TTS, name, phrase string) (*EchoService, error)
 		code:   "",
 		name:   name,
 		phrase: phrase,
-		echo:   false,
 		calls:  make(map[string]*echoCall),
+		caller: make(map[string]string),
 	}, nil
+}
+
+// SetCaller records the caller's full number for an upcoming call so a whoami
+// service can announce it. Called by the signaling layer before HandleCall.
+func (e *EchoService) SetCaller(callID, fullNumber string) {
+	e.mu.Lock()
+	e.caller[callID] = fullNumber
+	e.mu.Unlock()
 }
 
 func (e *EchoService) Code() string { return e.code }
 func (e *EchoService) Name() string { return e.name }
+
+// spokenNumber renders a formatted number (e.g. "440-952-2575") so a TTS reads
+// each digit individually: "4 4 0, 9 5 2, 2 5 7 5".
+func spokenNumber(full string) string {
+	var b strings.Builder
+	for _, r := range full {
+		if r == '-' {
+			b.WriteString(", ")
+		} else {
+			b.WriteRune(r)
+			b.WriteByte(' ')
+		}
+	}
+	return strings.TrimRight(b.String(), " ")
+}
 
 func (e *EchoService) HandleCall(callID string, offer *webrtc.SessionDescription, sendICE func(webrtc.ICECandidateInit)) (*webrtc.SessionDescription, error) {
 	log.Printf("EchoService: handling call %s", callID)
@@ -117,7 +158,16 @@ func (e *EchoService) HandleCall(callID string, offer *webrtc.SessionDescription
 		// Play welcome message first, then echo
 		go func() {
 			// Generate and play welcome
-			frames, err := e.tts.GenerateOpusFrames(e.phrase)
+			phrase := e.phrase
+			if e.whoami {
+				e.mu.RLock()
+				num := e.caller[callID]
+				e.mu.RUnlock()
+				if num != "" {
+					phrase = "Your OpenCarrier Network number is " + spokenNumber(num)
+				}
+			}
+			frames, err := e.tts.GenerateOpusFrames(phrase)
 			if err != nil {
 				log.Printf("EchoService: TTS failed: %v", err)
 			} else {
@@ -263,5 +313,8 @@ func (e *EchoService) EndCall(callID string) error {
 
 	log.Printf("EchoService: ending call %s", callID)
 	close(call.done)
+	e.mu.Lock()
+	delete(e.caller, callID)
+	e.mu.Unlock()
 	return call.pc.Close()
 }

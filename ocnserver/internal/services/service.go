@@ -15,3 +15,9 @@ type Service interface {
 type CallICE interface {
 	HandleCallICE(callID string, candidate webrtc.ICECandidateInit) error
 }
+
+// CallerAware is implemented by services that want the caller's own full number
+// before the call is set up (e.g. the *02 "what's my number" announcement).
+type CallerAware interface {
+	SetCaller(callID, fullNumber string)
+}
