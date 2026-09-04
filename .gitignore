@@ -9,6 +9,12 @@ ocnserver/ocnserver
 
 # Key files
 *.key
+*.pem
+
+# Firebase secrets
+*firebase-adminsdk*.json
+*firebase-service-account*.json
+*service-account*.json
 
 # TTS cache
 ocnserver/tts_cache/
